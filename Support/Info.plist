@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.copilot-pocket-printer.cli</string>
+    <key>CFBundleName</key>
+    <string>Pocket Printer CLI</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Discover your nearby Tronic 5890 pocket printer. Printing requires a separate explicit command.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>Discover your nearby Tronic 5890 pocket printer. Printing requires a separate explicit command.</string>
+</dict>
+</plist>
