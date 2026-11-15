@@ -5,22 +5,22 @@ A portable macOS foundation for printing your own bitmap cards on the Tronic
 another AI client, or a person can use the same CLI. A daily card is one future
 example, not a hard-coded product or a requirement to use Copilot or WorkIQ.
 
-**Printing from the Copilot app without per-print Terminal commands is now
-verified for the test pattern.** The user manually registered the BLE-free MCP
-bridge, authorized the independently launched native helper, approved one new
-print in Copilot and clicked its native approval button, then confirmed that
-the paper output looked exactly as expected.
+**Printing from the Copilot app with one per-print confirmation and no helper
+click is verified for the test pattern.** After user-only setup and explicit
+AI-client-mode opt-in, the user approved one new print in Copilot and confirmed
+correct paper output without a native helper click. An earlier separately
+approved test also verified the default native-confirmation mode.
 
 The earlier native Terminal/photo checkpoint also passed. Direct Bluetooth
 initialization in the Copilot host remains blocked by its missing usage
 metadata; the verified workflow keeps BLE in the separately authorized helper,
 without modifying Copilot or bypassing TCC. **The helper must remain open.**
-Native-window approval remains the default. A new persistent helper opt-in can
+Native-window approval remains the default. A persistent helper opt-in can
 trust AI-client per-job confirmations instead, removing the second click.
-That change is staged locally, not activated or physically verified; it trusts
-any same-user program claiming approval, not an attested human click.
+That mode was activated by the user and physically verified; it trusts any
+same-user program claiming approval, not an attested human click.
 Development rebuilds may request
-permission again, as observed with the scan-only probe. Both test-print
+permission again, as observed with the scan-only probe. All three test-print
 approvals are consumed; this result authorizes no further printing or features.
 There is no renderer for live data, canvas, calendar integration or automation.
 
@@ -301,13 +301,44 @@ The receipt remains **`paper_confirmed: false`** and was not edited to manufactu
 success. Physical success comes from the user's report, not a firmware
 acknowledgment or a new photograph inspected by this implementation session.
 Exact dimensions/feed length were not measured; approximately 46 mm is nominal.
-The tested mode used the native-window click as well as AI-client approval.
-The subsequent user-requested single-confirmation option is described in
-[confirmation modes and trust](bridge/README.md#confirmation-modes-and-trust).
-It has not changed the live helper or this consumed test receipt.
-Ad-hoc rebuild permission persistence remains unproven. This single-print
+This first Copilot test used the native-window click as well as AI-client
+approval; its consumed receipt remains unchanged. Ad-hoc rebuild permission
+persistence remains unproven. This single-print
 approval is consumed; it authorizes no further paper actions, later milestones,
 publication or merge.
+
+### Single-confirmation verification result
+
+On **2026-11-15**, the coordinating Project reported a second real Copilot
+checkpoint against local implementation commit `4d85d3a`, after the verified
+version-2 switch. Project approval controls recorded the user opening the
+updated helper, enabling AI-client confirmations and making Bluetooth ready.
+This was user-only setup, not an agent changing preferences or approving a
+native prompt.
+
+| Evidence | Observation | Proves |
+|---|---|---|
+| Registered status and inspection | `confirmation_mode: ai_client`, Bluetooth `ready`, no safety block/unresolved jobs; same compact PNG digest above, 384x288, 12 bands, 80 clearance dots | Opted-in mode and validated fixture through actual Copilot tools |
+| Fresh specific paper approval | User selected "Print one test now" after seeing the approximately 46 mm requirement | Authority for this one operation only |
+| Single submission and same receipt | Job `AA85D162-CDB9-4574-9994-CD2F9C46F300` immediately returned `in_progress` in `ai_client` mode at `17:15:29Z`, then `submitted_only` at `17:15:41Z`: 13,943 bytes, 2-second observation, disconnected | Local submission without a native helper click, duplicate submission, retry or replacement ID |
+| Project's physical-confirmation control | User selected exactly "Yes, correct print with no helper click" | Explicit user-confirmed correct paper output with only the Copilot per-print confirmation |
+
+The last reported status remained `ai_client`, Bluetooth `ready`, no safety
+block and no unresolved jobs. **Single-confirmation acceptance passed.** The
+transport receipt still has `paper_confirmed: false`; it was not rewritten.
+Physical confirmation is separate user evidence, not a transport acknowledgment
+or a new photograph inspected by this implementation session.
+
+One metadata caveat remains: tool discovery in the Project still displayed a
+mandatory-native-approval description while actual status and execution
+correctly reported `ai_client`. The cache or process responsible is unknown;
+existing connections may need tool-metadata refresh for accurate wording.
+No implementation change was made for that stale description.
+
+The [same-user trust boundary](bridge/README.md#confirmation-modes-and-trust)
+still applies, including client **Always allow** settings that may suppress
+prompts. This latest one-test approval is consumed. No further paper, setup,
+later milestone, publication or merge is authorized by this result.
 
 ## Native permission feasibility probe
 
@@ -468,8 +499,8 @@ Copilot app (optional) -> Project, canvas preview, local recurring automation
 ```
 
 The PNG/CLI foundation, native adapters, scan-only probe and helper/MCP bridge
-exist today. Both the Terminal path and one real Copilot/helper test-pattern
-print are physically verified, with the distinct evidence recorded above. Later templates
+exist today. The Terminal path and real Copilot/helper test-pattern prints in
+both confirmation modes are physically verified, with distinct evidence above. Later templates
 will let people choose their own layouts and content. Local MCP tools should
 reuse the same renderer and native core, without making Copilot, WorkIQ, or a particular
 daily-card schema prerequisites. BLE stays in native Swift/CoreBluetooth, not
@@ -484,7 +515,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 |---|---|
 | 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. Direct Copilot-host BLE remains blocked. |
 | Permission feasibility gate | Finder discovery and repeat/quit observed. Changed build requested fresh permission, then discovered; reauthorization works, update permission retention failed. |
-| Native helper and MCP gate | Native-confirmation path passed: own permission, real Copilot tools and user-confirmed output. Helper stays open. Optional AI-client-only confirmation is staged, not activated or physically verified. Test approval consumed. |
+| Native helper and MCP gate | Both default native confirmation and opted-in AI-client-only confirmation passed with real Copilot tools and user-confirmed output. No helper click in the latter test. Helper stays open; all test approvals consumed. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |
@@ -495,7 +526,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 |---|---|---|
 | Coordinate milestones and keep reference context | Project | Used to coordinate this work |
 | Implement and verify an isolated change | Session | Used for this local CLI foundation |
-| Reusable preview/print operations | MCP tools | Real Copilot preview and one helper-mediated print verified with user-confirmed output. Rendering remains planned. |
+| Reusable preview/print operations | MCP tools | Real Copilot preview and helper-mediated prints verified in both confirmation modes, including no per-print helper click. Rendering remains planned. |
 | Optional calendar context under a strict times-only boundary | WorkIQ | Planned; not required by shared code |
 | Preview, content toggles and explicit print | Canvas | Planned; no in-canvas Web Bluetooth |
 | Recurring local card delivery | Local automation | Planned; awake Mac and nearby printer required |

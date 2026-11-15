@@ -14,15 +14,25 @@ confirmation are recorded in the [verification result](../README.md#copilot-in-a
 The transport receipt still says `submitted_only`, `paper_confirmed: false`;
 user confirmation is separate evidence, not a receipt rewrite.
 
-That successful test used **native confirmation**, the default. The optional
-**AI-client confirmation** mode is now implemented and staged, but has not
-been activated or physically verified. It removes the second per-print helper
-click after a one-time helper opt-in; see the trust boundary below.
+That first successful test used **native confirmation**, the default. A second
+separately approved Copilot test on the same date verified **AI-client
+confirmation** after the user enabled the one-time helper opt-in. One submission
+immediately returned `in_progress` in `ai_client` mode, then `submitted_only`.
+The user selected exactly **"Yes, correct print with no helper click"** in the
+Project's confirmation control. No native per-print click, duplicate submission
+or retry occurred. See the [single-confirmation evidence](../README.md#single-confirmation-verification-result)
+and the unchanged trust boundary below.
+
+During that test, the Project's discovered tool description still said native
+approval was mandatory, while actual status and execution correctly reported
+`ai_client`. The responsible cache/process is unknown. Existing connections
+may need tool-metadata refresh for accurate wording; this observation does not
+require changing the functioning implementation.
 
 **Keep the helper open.** Closing it produces `helper_not_running`; the bridge
 does not relaunch it. Development rebuilds may require fresh Bluetooth
 permission. These setup prompts are distinct from per-print confirmation.
-The successful test approval is consumed; this change and the setup procedure
+All completed test approvals are consumed; this change and the setup procedure
 below do not authorize another paper operation.
 
 The server implements the narrow JSON-RPC/MCP stdio subset it advertises:
@@ -102,7 +112,9 @@ If the existing helper must remain running, use
 `.build/staged/Pocket Printer Helper.app` without changing
 `.build/Pocket Printer Helper.app`. Do not launch the staged copy or replace
 the active bundle until the user quits the old helper and approves the switch.
-The current single-confirmation change stops at this staged boundary.
+The development checkpoint recorded above completed that approved switch
+without rebuilding, preserved version 1, and passed the later user-only setup
+and separately approved physical test.
 
 The app is `.build/Pocket Printer Helper.app`. It is separate from the original
 scan-only **Pocket Printer Probe.app**, with a new bundle ID and a truthful
