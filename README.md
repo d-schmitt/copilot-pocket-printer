@@ -124,13 +124,19 @@ shared card XCTest wrapper. For a Command Line Tools-only local machine,
 reports XCTest as **not run**. It is not a passing complete CI result.
 No npm/Python package installation or extra lint framework is needed.
 
+The multi-file `PermissionProbe` and `PrinterHelper` targets keep their `@main`
+types in named application files, not the special `main.swift` filename.
+Swift 6.1 otherwise treats that file as a top-level entrypoint and rejects the
+additional `@main`. The full-package build checks this compatibility before
+running the unchanged behavioral suites; no target or XCTest suite is skipped.
+
 Runner inventory and action releases were checked on 2026-11-15:
 [macOS 15 inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md),
 [checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
 [setup-node v7.1.0](https://github.com/actions/setup-node/releases/tag/v7.1.0),
 [setup-python v7.1.0](https://github.com/actions/setup-python/releases/tag/v7.1.0).
-Local validation is not a GitHub-hosted run. Publishing a branch/PR and running
-hosted CI still requires separate authorization; nothing was pushed here.
+Local validation is not a GitHub-hosted run. Check the PR's **Offline checks**
+result for verification with the pinned hosted toolchain.
 
 ## CLI
 
