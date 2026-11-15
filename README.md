@@ -5,9 +5,10 @@ A portable macOS foundation for printing your own bitmap cards on the Tronic
 another AI client, or a person can use the same CLI. A daily card is one future
 example, not a hard-coded product or a requirement to use Copilot or WorkIQ.
 
-**Milestone 1 is incomplete: offline preparation works; physical print/feed are
-deliberately blocked by defects in the pinned upstream transport. No paper
-output has been verified.** There is no renderer for live data, MCP server,
+**Milestone 1 is incomplete: the repaired native adapter passes offline checks,
+and user-launched Terminal discovery has succeeded. Connected status and paper
+output remain unverified.** Print/feed require explicit per-operation approval;
+the observed Copilot app host still cannot initialize Bluetooth. There is no renderer for live data, MCP server,
 canvas, calendar integration, or automation yet.
 
 ## Build and offline checks
@@ -36,8 +37,12 @@ result, and exits nonzero if any assertion fails. Both runners cover command
 parsing, German transliteration,
 thresholding, transparency, row/bit order, input limits, activation boundaries,
 24-line bands, credit-frame classification, printer selection, metadata
-preflight and the guard against physical operations. They do **not** prove additive credit accounting
-inside the private upstream BLE queue, radio delivery, or paper output.
+preflight and the explicit physical-operation gate. Inert transport checks cover
+notification readiness, synchronous Combine delivery, status-only command
+batches, unrelated battery drains, outstanding response callbacks, deadlines,
+cancellation and no replay. They do **not** prove radio delivery or paper output.
+The repair fork separately checks its actual additive-credit state and adapter
+wiring without Bluetooth hardware.
 The Python smoke checks exercise executable exit codes and actual file IO,
 including invalid input and guarded physical commands. They use only the
 standard library. Neither suite scans or connects to Bluetooth.
@@ -45,7 +50,7 @@ standard library. Neither suite scans or connects to Bluetooth.
 On the development Mac, `swift build` succeeds but `swift test` cannot import
 `XCTest`: only Command Line Tools are installed, without XCTest or Swift Testing.
 The native SwiftPM test runner encounters the same missing module. No system
-installation was attempted. **11/11 shared Swift behavioral checks and 7/7
+installation was attempted. **24/24 shared Swift behavioral checks and 7/7
 Python process-level smoke checks pass.** `swift test` itself remains unavailable
 here, not passed; run its XCTest wrapper on a Mac with that runtime.
 
@@ -55,8 +60,9 @@ here, not passed; run its XCTest wrapper on a Mac with that runtime.
 |---|---|
 | `print <png> --dry-run` | Validates, thresholds and assembles an offline print job; no Bluetooth access. |
 | `feed [dots] --dry-run` | Assembles activation, feed and stop segments; default 80, range 1...255. |
-| `print <png>` / `feed [dots]` | Fail with `upstream_transport_blocked`, exit 6, before any Bluetooth access. |
-| `status [--device <uuid>] [--timeout <seconds>]` | Metadata preflight, then bounded advertisement scan; currently blocked from the observed Copilot host. Never connects or sends commands. |
+| `print <png>` / `feed [dots]` | Without `--device <uuid> --confirm-paper`, fail with `paper_approval_required`, exit 6, before Bluetooth access. With separate user approval and those flags, submit one bounded physical job. |
+| `status [--device <uuid>] [--timeout <seconds>]` | Metadata preflight, then bounded advertisement scan. Never connects or sends commands. |
+| `status --device <uuid> --connect` | Connect, confirm FF00/FF02 plus both FF01/FF03 notifications, send activated status queries, collect replies, and disconnect. No raster, feed or settings requested. |
 | `test-pattern <new.png>` | Generates a local 384x288 PNG; refuses to overwrite an existing file. |
 
 Use `--help` for accepted options. `status` waits the full scan window (default
@@ -67,11 +73,26 @@ requires the exact name `Mini Pocket Printer_BLE`. Multiple matches fail;
 is not device-model verification. DP-L13 and generic "printer" matches are not
 automatically selected.
 
-Status reports discovery, not readiness: battery, paper, model and firmware
-remain unknown. A missing advertisement could mean off, out of range, connected
+Without `--connect`, status reports discovery, not readiness: battery, paper,
+model and firmware remain unknown. A missing advertisement could mean off, out of range, connected
 elsewhere, or differently named; a scan cannot distinguish those causes.
-Upstream scanning writes a diagnostic log to
-`~/Library/Logs/PocketPrinter5890App/ble.log`; it is outside this repository.
+The CLI uses `PocketPrinter5890BLE(fileLoggingEnabled: false)`, so it does not
+create or append an upstream BLE log file. Existing logs are not removed.
+
+`--connect` is not a passive scan. Protocol section 3.1 requires motor activation
+`10 FF F1 03`, a separate twelve-zero wake write, and stop `10 FF F1 45` even for
+model/firmware/battery/paper queries. The complete batch contains those commands,
+not any raster, feed, label, density or persistent-setting command. Upstream's
+bare `readDeviceInformation()` calls do not satisfy that activation requirement.
+Battery notifications or automatic queries can arrive independently; battery
+alone does not make our status queries verified. Missing fields stay `unknown`;
+paper is shown as a raw informational byte, not a definitive ready/empty claim.
+
+Startup is bounded to 5 seconds; scan and connection each use `--timeout`
+(default 8, range 1...30). A submitted job has a 120-second overall limit and
+a 10-second no-progress limit. The connection stays open for a 2-second reply
+or post-submission observation window, then disconnects with a 2-second deadline.
+The observation delay is not raster pacing or proof of print completion.
 
 Errors go to stderr with a stable bracketed code:
 
@@ -81,13 +102,21 @@ Errors go to stderr with a stable bracketed code:
 | 3 | `bluetooth_denied`, `bluetooth_unavailable`, or `bluetooth_host_missing_description` |
 | 4 | `printer_missing_or_offline` |
 | 5 | `printer_ambiguous` |
-| 6 | `upstream_transport_blocked` |
+| 6 | `paper_approval_required` |
+| 7 | `connection_failed` (includes service or notification readiness failure) |
+| 8 | `transfer_stalled` |
+| 9 | `transfer_interrupted` |
+| 10 | `status_unverified` (no model, firmware or solicited paper value decoded) |
 | 130 | Task cancellation or process interrupt |
 | 1 | Unexpected local error |
 
-Transfer stalled/interrupted/completed states are **not implemented**, because
-no transfer is permitted. There is no reconnect, retry, daemon, login item,
-configuration command, firmware access, or hidden paper-consuming action.
+`SUBMITTED ONLY` means local bytes were handed to CoreBluetooth and any
+required write-response callbacks completed. Without-response writes have no
+delivery acknowledgement. It does **not** mean firmware receipt, motor
+completion, or successful paper output. A disconnect, cancellation, stall or
+write failure returns nonzero and discards pending work. Partial paper output
+is possible: never automatically retry. There is no reconnect, daemon, login
+item, firmware update, persistent configuration change, or hidden feed.
 
 ### Images and the test pattern
 
@@ -121,9 +150,9 @@ device settings. Do not flatten the activation and wake segments into one write.
 
 `Support/Info.plist` is embedded in the native executable's Mach-O
 `__TEXT,__info_plist` section, including `NSBluetoothAlwaysUsageDescription`.
-Neither help, image generation, dry runs, nor blocked print/feed initialize
-CoreBluetooth. `status` is the only command that can reach Bluetooth, and
-metadata preflight can stop it before any scan.
+Neither help, image generation, dry runs, nor unapproved print/feed initialize
+CoreBluetooth. Every native operation retains the metadata preflight, which
+can stop it before any scan.
 
 **Observed app-host blocker:** the first bounded status attempt from the
 Copilot app exited 134. macOS TCC identified **GitHub Copilot**
@@ -142,11 +171,19 @@ API. Do not unset it to bypass the check. The signed app needs an owner-supplied
 fix; this repository does not modify the app, permission state, or launch route.
 A preflight-only failure is not a successful scan.
 
-Once the responsible host is fixed and a read-only check is appropriate,
-switch on the printer and keep it nearby, then run:
+An independently user-launched macOS Terminal check has reported
+`DISCOVERED ONLY: Mini Pocket Printer_BLE`. That confirms advertisements on
+that launch path only, not a connection or end-to-end Copilot printing. No
+permission-dialog owner was reported. The specific device UUID is supplied
+at runtime, not committed as a default.
+
+From an explicitly approved host, switch on the printer and keep it nearby.
+For passive discovery, then a separate connected status check:
 
 ```sh
 "$BIN" status --timeout 8
+# Replace the placeholder with the UUID from your discovery result.
+"$BIN" status --device YOUR-DISCOVERED-UUID --connect --timeout 8
 ```
 
 If macOS asks **to allow Bluetooth access**, approve that native Bluetooth
@@ -161,23 +198,24 @@ the observed Copilot host. If a corrected host shows a native request for
 **GitHub Copilot**, approve its Bluetooth access and expect the matching
 **GitHub Copilot** entry under **System Settings > Privacy & Security >
 Bluetooth**; that prompt and entry still need observation after the fix.
-An independent Terminal check requires separate user approval and observation
-of its actual owner; it would not verify end-to-end Copilot printing. None was
-attempted. If approval takes longer than the bounded startup window, explicitly
+An independent Terminal check requires user approval and observation of its
+actual owner; Terminal discovery success does not identify that permission
+owner or repair the app-host defect. If approval takes longer than the bounded startup window, explicitly
 rerun status afterward. No automatic retry.
 
-After the upstream blocker below is resolved, the next checkpoint is:
+The next hardware checkpoint is:
 
-1. Resolve the responsible app's missing Bluetooth metadata and confirm a
-   reviewed dependency revision, passing offline checks, and a
-   bounded, single-job adapter with explicit stall/disconnect errors.
-2. Observe the Bluetooth prompt and record its exact application name. Identify
-   exactly one intended printer. Do not treat advertisement discovery as a
-   successful device query.
+1. Use the reviewed repair pin and passing offline checks in the user-approved
+   host. The Copilot app's missing metadata remains a separate blocker to
+   app-origin BLE; do not bypass it.
+2. Run connected status for the explicitly discovered UUID. Record the output
+   and actual permission owner if a prompt appears. Advertisement discovery
+   alone is not a successful query; transport readiness is not paper readiness.
 3. **Obtain explicit approval before one test print or any feed.** The
    288-row fixture plus 80 clearance dots consumes about 46 mm of paper at
    203 dpi. Nothing should automatically repeat a partial or failed job.
-4. Run the approved test print once. Ask the user to check both border edges,
+4. For the separately approved operation, use `print examples/test-pattern.png`
+   with `--device <uuid> --confirm-paper` once. Ask the user to check both border edges,
    all bands, upright readable text, the bottom label, and clearance feed.
    Only that visual confirmation completes milestone 1.
 
@@ -185,17 +223,20 @@ Queue empty, bytes handed to CoreBluetooth, `01 nn` credits, or the unsolicited
 `AA 0D 0A` service frame are **not proof that paper printed**. Current dry-run
 success explicitly states that nothing was transmitted.
 
-### Pinned upstream hardware blocker
+### Reviewed repair dependency
 
 Dependency: [dimer47/PocketPrinter5890](https://github.com/dimer47/PocketPrinter5890),
-MIT, copyright 2026 Dimitri Iachi. It remains a separate hardware library, not a
-fork or copied source tree. `Package.swift` and `Package.resolved` pin reviewed
-commit `20118975f6e58d5910657d7ba3daa62c3e5edae9`; no version tag is assumed.
+MIT, copyright 2026 Dimitri Iachi. It remains the separate hardware library.
+`Package.swift` and `Package.resolved` now pin the user-approved public repair
+fork [d-schmitt/PocketPrinter5890](https://github.com/d-schmitt/PocketPrinter5890)
+at independently verified commit
+[`f5a31521e5e415b8091a49f20cc836956947604b`](https://github.com/d-schmitt/PocketPrinter5890/commit/f5a31521e5e415b8091a49f20cc836956947604b).
+No version tag or moving branch is used. No dependency checkout was patched.
 Retain [NOTICE](NOTICE) when distributing a linked binary.
 
 The [protocol specification](https://github.com/dimer47/PocketPrinter5890/blob/20118975f6e58d5910657d7ba3daa62c3e5edae9/docs/PROTOCOL_SPEC.md)
 requires separate activation writes, additive `01 nn` credits, and raster
-bands of about 24 lines. Inspection of the pinned
+bands of about 24 lines. Inspection of the original reviewed revision's
 [BLE transport](https://github.com/dimer47/PocketPrinter5890/blob/20118975f6e58d5910657d7ba3daa62c3e5edae9/swift/Sources/PocketPrinter5890BLE/PocketPrinterBLETransport.swift)
 found:
 
@@ -210,14 +251,18 @@ found:
 - Lines 341-357 retain pending writes on disconnect; reconnect drains that
   queue. The wrapper could avoid replay by never reconnecting, but that does
   not solve credit/readiness correctness. Connection also starts automatic
-  unactivated battery writes, which is why current status never connects.
+  unactivated battery writes, so the adapter must distinguish those drains
+  from its own submitted command batch.
 
-Minimal upstream changes to review: preserve a per-request raster-credit
-requirement across all chunks; expose readiness only after both notification
-subscriptions succeed; cancel and clear queued work on disconnect. A usable
-adapter also needs bounded deadlines and transport outcomes that do not claim
-physical completion. The dependency has **not** been patched, vendored, or
-replaced. Actual print and feed remain guarded pending that review and fix.
+The reviewed repair classifies raster requests before chunking, preserving
+credit requirements for short tails and complete one-row bands. Typed
+`.ready` waits for every required notification subscription; disconnect clears
+queued work and invalidates stale callbacks. The CLI additionally verifies the
+exact FF00 profile, installs observers before operations, consumes emitted
+Combine values rather than willSet property reads, and submits all segments in
+one atomic call. It tracks its own pending/drained cycle so a battery-query
+drain cannot finish the job. These are hardware-free correctness checks, not
+a claim that the repaired path has printed on this device.
 
 ## One portable core, optional integrations
 
@@ -233,7 +278,7 @@ Any AI client -> local/stdio MCP render_card, preview_card, print_card
 Copilot app (optional) -> Project, canvas preview, local recurring automation
 ```
 
-Only the offline PNG/CLI foundation and discovery exist today. Later templates
+Only the PNG/CLI foundation and native adapter exist today. Later templates
 will let people choose their own layouts and content. Local MCP tools should
 reuse the same renderer and CLI, without making Copilot, WorkIQ, or a particular
 daily-card schema prerequisites. BLE stays in native Swift/CoreBluetooth, not
@@ -246,7 +291,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 
 | Milestone | Status / checkpoint |
 |---|---|
-| 1. CLI test pattern on real hardware | Offline foundation; blocked, not hardware verified. Stop here for user confirmation. |
+| 1. CLI test pattern on real hardware | Repaired adapter verified offline; Terminal discovery observed. Connected status and paper output still pending; app-origin BLE remains blocked. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |

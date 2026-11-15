@@ -52,8 +52,8 @@ class CLISmokeTests(unittest.TestCase):
 
     def test_help_is_offline_and_honest(self):
         result = self.run_cli("--help")
-        self.assertIn("BLOCKED", result.stdout)
-        self.assertIn("scans only", result.stdout)
+        self.assertIn("--confirm-paper", result.stdout)
+        self.assertIn("scans only unless --connect", result.stdout)
 
     def test_pattern_and_no_overwrite(self):
         path = self.root / "pattern.png"
@@ -83,7 +83,7 @@ class CLISmokeTests(unittest.TestCase):
         path = self.write_png()
         for arguments in (("print", path), ("feed", "80")):
             result = self.run_cli(*arguments, code=6)
-            self.assertIn("upstream_transport_blocked", result.stderr)
+            self.assertIn("paper_approval_required", result.stderr)
             self.assertEqual(result.stdout, "")
 
     def test_invalid_images_fail_before_hardware_guard(self):
@@ -99,13 +99,14 @@ class CLISmokeTests(unittest.TestCase):
         ):
             result = self.run_cli("print", path, code=2)
             self.assertIn("invalid_image", result.stderr)
-            self.assertNotIn("upstream_transport_blocked", result.stderr)
+            self.assertNotIn("paper_approval_required", result.stderr)
 
     def test_invalid_arguments(self):
         for arguments in (
             ("print",), ("status", "--dry-run"), ("status", "--timeout", "nan"),
             ("status", "--device", "not-a-uuid"), ("feed", "--dry-run", "--dry-run"),
-            ("print", "one.png", "two.png"),
+            ("print", "one.png", "two.png"), ("status", "--connect"),
+            ("feed", "--dry-run", "--confirm-paper"),
         ):
             result = self.run_cli(*arguments, code=2)
             self.assertIn("invalid_input", result.stderr)

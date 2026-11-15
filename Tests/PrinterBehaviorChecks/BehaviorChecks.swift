@@ -33,9 +33,13 @@ public struct BehaviorChecks {
         let status = try CLIOptions.parse(["status", "--device", id.uuidString, "--timeout", "1"])
         try equal(status.device, id)
         try equal(status.timeout, 1)
+        try expect(CLIOptions.parse(["status", "--connect", "--device", id.uuidString]).connect)
+        try rejects { _ = try CLIOptions.parse(["status", "--connect"]) }
+        try rejects { _ = try CLIOptions.parse(["print", "x.png", "--dry-run", "--confirm-paper"]) }
+        try CLIOptions.parse(["print", "x.png", "--device", id.uuidString, "--confirm-paper"]).requirePaperApproval()
         for arguments in [
             ["print"], ["print", "one.png", "two.png"], ["feed", "0"], ["feed", "256"],
-            ["feed", "1.5"], ["status", "--dry-run"], ["print", "x.png", "--device", id.uuidString],
+            ["feed", "1.5"], ["status", "--dry-run"], ["print", "x.png", "--connect"],
             ["status", "--timeout", "nan"], ["status", "--timeout", "31"],
             ["status", "--timeout"], ["status", "--device", "not-a-uuid"],
             ["feed", "--dry-run", "--dry-run"], ["test-pattern", "x.png", "--dry-run"]
@@ -121,10 +125,9 @@ public struct BehaviorChecks {
         ])
         try rejects { _ = try PrintJob.feed(dots: 0) }
         try rejects { _ = try PrintJob.feed(dots: 256) }
-        let bitmap = try RasterImage.decodePNG(TestPattern.pngData())
-        for operation in [job, try PrintJob.image(bitmap)] {
-            try rejects({ try operation.requireSafeTransport() }, verify: { error in
-                try equal((error as? CLIError)?.code, "upstream_transport_blocked")
+        for arguments in [["print", "x.png"], ["feed", "80"], ["feed", "--confirm-paper"]] {
+            try rejects({ try CLIOptions.parse(arguments).requirePaperApproval() }, verify: { error in
+                try equal((error as? CLIError)?.code, "paper_approval_required")
                 try equal((error as? CLIError)?.exitCode, 6)
             })
         }
@@ -137,8 +140,8 @@ public struct BehaviorChecks {
             }
         }
         try expect(ResponseDecoder.looksLikeSolicitedResponse([0x00, 98], context: "battery"))
-        // Additive accounting is private to BLE. These checks do not verify it;
-        // no physical transfer is allowed until that upstream gap is resolved.
+        // Additive accounting is covered by the repair fork's state/adapter
+        // checks, not by this response-classification assertion.
     }
 
     private func selection() throws {
@@ -192,15 +195,15 @@ public struct BehaviorChecks {
     }
 }
 
-private struct CheckFailure: Error, CustomStringConvertible {
+struct CheckFailure: Error, CustomStringConvertible {
     let description: String
 }
 
-private func expect(_ condition: Bool, file: StaticString = #fileID, line: UInt = #line) throws {
+func expect(_ condition: Bool, file: StaticString = #fileID, line: UInt = #line) throws {
     guard condition else { throw CheckFailure(description: "\(file):\(line): condition failed") }
 }
 
-private func equal<T: Equatable>(_ actual: T, _ expected: T, file: StaticString = #fileID, line: UInt = #line) throws {
+func equal<T: Equatable>(_ actual: T, _ expected: T, file: StaticString = #fileID, line: UInt = #line) throws {
     guard actual == expected else {
         throw CheckFailure(description: "\(file):\(line): got \(actual), expected \(expected)")
     }
@@ -211,7 +214,7 @@ private func unwrap<T>(_ value: T?, file: StaticString = #fileID, line: UInt = #
     return value
 }
 
-private func rejects(
+func rejects(
     _ operation: () throws -> Void, verify: (Error) throws -> Void = { _ in },
     file: StaticString = #fileID, line: UInt = #line
 ) throws {

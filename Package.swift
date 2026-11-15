@@ -14,8 +14,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/dimer47/PocketPrinter5890.git",
-            revision: "20118975f6e58d5910657d7ba3daa62c3e5edae9"
+            url: "https://github.com/d-schmitt/PocketPrinter5890.git",
+            revision: "f5a31521e5e415b8091a49f20cc836956947604b"
         )
     ],
     targets: [

@@ -29,6 +29,17 @@ public struct PrintJob {
         )
     }
 
+    public static var statusSegments: [PrintSegment] {
+        // Protocol spec section 3.1 requires activation even for model queries.
+        // Bare upstream readDeviceInformation() calls are not a substitute.
+        activate([
+            PrintSegment(name: "Model", bytes: PrinterCommand.model),
+            PrintSegment(name: "Firmware", bytes: PrinterCommand.firmware),
+            PrintSegment(name: "Battery", bytes: PrinterCommand.battery),
+            PrintSegment(name: "Paper", bytes: PrinterCommand.paperStatus)
+        ])
+    }
+
     private static func activate(_ content: [PrintSegment]) -> [PrintSegment] {
         [
             PrintSegment(name: "Activate", bytes: PrinterCommand.Luck.enablePrinter()),
@@ -44,9 +55,4 @@ public struct PrintJob {
         """
     }
 
-    public func requireSafeTransport() throws {
-        // No public upstream API exposes notification readiness or fixes the
-        // <=64-byte remaining-raster credit bypass. Never disguise that as success.
-        throw CLIError.transportBlocked
-    }
 }

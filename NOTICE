@@ -2,7 +2,9 @@ Copilot Pocket Printer depends on PocketPrinter5890 through Swift Package Manage
 No upstream implementation source is vendored in this repository.
 
 Upstream: https://github.com/dimer47/PocketPrinter5890
-Reviewed revision: 20118975f6e58d5910657d7ba3daa62c3e5edae9
+Repair fork: https://github.com/d-schmitt/PocketPrinter5890
+Reviewed fork revision: f5a31521e5e415b8091a49f20cc836956947604b
+Original reviewed base: 20118975f6e58d5910657d7ba3daa62c3e5edae9
 
 The following notice applies to PocketPrinter5890, including when distributing
 a linked printer-cli binary:

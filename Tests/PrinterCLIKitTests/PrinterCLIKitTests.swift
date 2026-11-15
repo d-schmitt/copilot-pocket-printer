@@ -11,4 +11,15 @@ final class PrinterCLIKitTests: XCTestCase {
             }
         }
     }
+
+    @MainActor
+    func testIntegrationChecks() async {
+        for check in IntegrationChecks().cases {
+            do {
+                try await check.run()
+            } catch {
+                XCTFail("\(check.name): \(error)")
+            }
+        }
+    }
 }

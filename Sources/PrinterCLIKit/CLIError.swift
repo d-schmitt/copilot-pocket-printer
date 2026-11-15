@@ -8,7 +8,11 @@ public enum CLIError: Error, LocalizedError {
     case bluetoothUnavailable(String)
     case printerMissing
     case printerAmbiguous([UUID])
-    case transportBlocked
+    case paperApprovalRequired
+    case connectionFailed(String)
+    case transferStalled(String)
+    case transferInterrupted(String)
+    case statusUnverified(String)
 
     public var code: String {
         switch self {
@@ -19,7 +23,11 @@ public enum CLIError: Error, LocalizedError {
         case .bluetoothUnavailable: return "bluetooth_unavailable"
         case .printerMissing: return "printer_missing_or_offline"
         case .printerAmbiguous: return "printer_ambiguous"
-        case .transportBlocked: return "upstream_transport_blocked"
+        case .paperApprovalRequired: return "paper_approval_required"
+        case .connectionFailed: return "connection_failed"
+        case .transferStalled: return "transfer_stalled"
+        case .transferInterrupted: return "transfer_interrupted"
+        case .statusUnverified: return "status_unverified"
         }
     }
 
@@ -29,7 +37,11 @@ public enum CLIError: Error, LocalizedError {
         case .bluetoothDenied, .bluetoothHostMissingDescription, .bluetoothUnavailable: return 3
         case .printerMissing: return 4
         case .printerAmbiguous: return 5
-        case .transportBlocked: return 6
+        case .paperApprovalRequired: return 6
+        case .connectionFailed: return 7
+        case .transferStalled: return 8
+        case .transferInterrupted: return 9
+        case .statusUnverified: return 10
         }
     }
 
@@ -64,13 +76,20 @@ public enum CLIError: Error, LocalizedError {
             Multiple matching printers were found. Repeat status with --device and one UUID: \
             \(identifiers.map(\.uuidString).sorted().joined(separator: ", "))
             """
-        case .transportBlocked:
+        case .paperApprovalRequired:
             return """
-            Actual print/feed are disabled for upstream revision 20118975. Raster tails can \
-            bypass credits and notification readiness is not exposed. No Bluetooth access \
-            or paper movement was attempted. Use --dry-run for offline validation. \
-            See README hardware blocker; do not remove this guard without a reviewed fix.
+            No Bluetooth access or paper movement was attempted. Obtain explicit user approval \
+            for this one physical operation, then supply --device <uuid> --confirm-paper. \
+            Do not repeat a failed or partial print automatically. Use --dry-run for offline validation.
             """
+        case .connectionFailed(let detail):
+            return "Connection failed: \(detail). No automatic reconnect."
+        case .transferStalled(let detail):
+            return "Transfer stalled: \(detail). Pending work cancelled; paper output may be partial. Do not automatically retry."
+        case .transferInterrupted(let detail):
+            return "Transfer interrupted: \(detail). Paper output may be partial. Do not automatically retry."
+        case .statusUnverified(let detail):
+            return "No model, firmware or solicited paper value was decoded in the observation window; battery alone does not verify our queries.\n\(detail)"
         }
     }
 }
