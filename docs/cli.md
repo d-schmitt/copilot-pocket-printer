@@ -28,6 +28,11 @@ packages the helper and bridge, not this standalone CLI.
 | `status [--device <uuid>] [--timeout <seconds>]` | Metadata preflight and bounded advertisement scan; no connection or device query. |
 | `status --device <uuid> --connect` | Confirm FF00/FF02 and FF01/FF03 notifications, query model/firmware/battery/paper with activation/wake/stop writes, then disconnect. No raster, feed, or settings requested. |
 | `test-pattern <new.png>` | Generate a local 384 x 288 PNG; refuse to overwrite an existing file. |
+| `card-renderer <template.json\|-> <new.png>` (separate executable) | Render bounded JSON blocks into a 384-dot PNG and emit a layout report, without the helper or Bluetooth. |
+
+See [daily-card interfaces](daily-card.md#call-from-any-assistant-or-cli) for
+renderer and optional assembler usage. These are separate from `printer-cli`
+and are not included in the installed MCP package.
 
 `--timeout` is 1...30 seconds, default 8. It bounds scan and connection
 separately, after at most 5 seconds of Bluetooth startup. Status waits the

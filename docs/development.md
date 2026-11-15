@@ -11,46 +11,51 @@ The package declares macOS 13 and Swift tools 5.9 as minima. That declaration
 is not evidence that every older compiler can build the pinned dependency.
 Use a toolchain verified for the chosen source revision.
 
-The renderer's [passing hosted offline checks](https://github.com/d-schmitt/copilot-pocket-printer/actions/runs/43756968371)
-use macOS 26 and Xcode 26.6 with Swift 6.3.3, including full XCTest and the
-integrated installer suite. That result belongs to
-[#13](https://github.com/d-schmitt/copilot-pocket-printer/pull/13), which is
-still under review, not merged main. Its build recovery includes source-identical
-entrypoint renames; an older compiler also hit a dependency type-checker limit.
-Do not treat those passing branch checks as validation of main with that
-toolchain, or mistake the earlier failures for a current CI blocker.
+[PR CI](../.github/workflows/ci.yml) pins macOS 26 and Xcode 26.6 with Swift
+6.3.3. The merged renderer's [hosted checks](https://github.com/d-schmitt/copilot-pocket-printer/actions/runs/43756968371)
+passed on that toolchain with full XCTest and integrated installer coverage.
+Check the current revision's **Offline checks** result rather than treating
+that historical pass as validation of subsequent changes.
+
+The multi-file `PermissionProbe` and `PrinterHelper` targets keep their `@main`
+types in named application files, not the special `main.swift` filename.
+Swift 6.1 otherwise treats that file as a top-level entrypoint and rejects the
+additional `@main`. Xcode 16.4/Swift 6.1 and Xcode 26.3/Swift 6.2 also exhausted
+their type checkers on the pinned dependency's `LuckPrinterCommands.setTimeFormat`
+expression. The newer CI toolchain avoids patching dependency checkouts,
+changing the verified revision, or relaxing compiler limits.
 
 ## Offline checks
 
-In addition to the native toolchain, use Python 3 and Node 22+. Full Xcode
+In addition to the native toolchain, use Python 3.9+ and Node 22+. Full Xcode
 provides the XCTest runtime. Do not install system components without the
 machine owner's approval. The first Swift build downloads the
 [pinned dependency](architecture.md#reviewed-dependency-and-transport);
 the checks below use no calendar, weather, Bluetooth, or paper.
 
-From the repository root:
+From the repository root, use the same entry point as CI:
 
 ```sh
-swift build
-swift test
-BIN_DIR="$(swift build --show-bin-path)"
-"$BIN_DIR/printer-cli-checks"
-"$BIN_DIR/printer-helper-checks"
-"$BIN_DIR/printer-cli" --help
-"$BIN_DIR/printer-cli" print examples/test-pattern.png --dry-run
-"$BIN_DIR/printer-cli" feed 80 --dry-run
-python3 scripts/smoke_test.py "$BIN_DIR/printer-cli"
-HELPER_CHECKS_BIN="$BIN_DIR/printer-helper-checks" npm test --prefix bridge
-python3 -m unittest discover -s scripts -p 'test_install_printer.py'
+bash scripts/checks.sh
 ```
 
-On a Command Line Tools-only installation, `swift test` may fail to import
-`XCTest`. That is not a passing test run. The `printer-cli-checks` executable
-needs no XCTest runtime and executes the same shared assertions as the XCTest
-wrapper. Continue with the standalone checks when that runtime is unavailable;
-record the limitation rather than installing Xcode implicitly.
-For release coverage, repeat with `swift build -c release` and
-`swift build -c release --show-bin-path` before running the executable checks.
+This builds the package, runs Swift CLI/helper/card assertions, Python CLI/card
+integration and installer safety tests, Node stdio/Unix-IPC tests, then
+`swift test`. The CLI and card XCTest wrappers use the same shared assertions
+as their standalone executables. No npm/Python packages or extra lint framework
+are needed. For focused commands, see the [CLI](cli.md) and
+[renderer checks](daily-card.md#offline-verification).
+
+On a Command Line Tools-only installation, XCTest may be unavailable. Use:
+
+```sh
+bash scripts/checks.sh --without-xctest
+```
+
+This explicitly reports XCTest as **not run** and runs all other suites.
+It is not a complete CI pass. Do not install Xcode implicitly.
+For release coverage, build with `swift build -c release` and obtain the
+executable paths with `swift build -c release --show-bin-path`.
 
 The shared assertions cover parsing, ASCII transliteration, thresholding,
 transparency, bit/row order, input limits, activation boundaries, 24-line bands,
@@ -59,6 +64,9 @@ approval gate. Inert transport tests cover notification readiness, synchronous
 Combine delivery, status-only batches, unrelated battery drains, response
 callbacks, deadlines, cancellation, and no replay.
 The repair fork separately tests its additive-credit state and adapter wiring.
+Renderer checks cover layout/PNG bounds, compact fit/fallback, ASCII wrapping,
+privacy sentinels, diagnostics, Sudoku uniqueness/difficulty, time/DST handling,
+walk selection and provider failures using synthetic inputs, not live services.
 
 The probe checks cover user initiation, unlimited consent waiting, bounded
 controller/scan timers, typed failures, repeat/cancel/close behavior, stale
@@ -79,6 +87,26 @@ Actual staging additionally verifies the copied app with `codesign` and
 helper tools. None of these tests proves registered-client exposure, retained
 Bluetooth permission, radio delivery, or paper output. Those need separately
 authorized observations; see [evidence boundaries](architecture.md#verification-boundaries).
+
+## Hosted CI
+
+[PR CI](../.github/workflows/ci.yml) runs on pull requests and pushes to main.
+The stable check name is **Offline checks**; making it required is a separate
+repository-rule decision. The job uses full Xcode 26.6, Node 24 and Python 3.13
+on `macos-26`. External actions are pinned to release commits.
+
+It has read-only contents permission, no retained checkout credentials, no
+secrets, no `pull_request_target`, no deployment or artifact upload, a 20-minute
+timeout, and cancellation of superseded runs. Build/runtime setup may download
+dependencies, but tests do not call live calendar/weather services or Bluetooth.
+Helper tests use isolated temporary stores and inert executors, never the running
+user's helper or preferences; installer tests never install or launch the real app.
+
+The [runner inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+and pinned [checkout](https://github.com/actions/checkout/releases/tag/v7.0.1),
+[setup-node](https://github.com/actions/setup-node/releases/tag/v7.1.0), and
+[setup-python](https://github.com/actions/setup-python/releases/tag/v7.1.0)
+releases document the hosted environment. Local validation is not a hosted run.
 
 ## Build a helper without activation
 

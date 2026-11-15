@@ -29,8 +29,10 @@ their source hosting. Native pull-request integration parity is not established.
 
 The upstream hardware library remains a separate repository. Keep this
 repository's reusable core together unless independent release or ownership
-needs justify a split. Optional renderers should produce PNGs for the same core,
-not introduce Copilot, WorkIQ, or a daily-card schema as printing prerequisites.
+needs justify a split. The [JSON-to-PNG renderer and daily-card assembler](daily-card.md)
+produce PNGs for the same core without introducing Copilot, WorkIQ, or a daily-card
+schema as printing prerequisites. They run separately from the installed helper
+and bridge; MCP rendering is still planned.
 Canvas controls must use native tools, not Web Bluetooth.
 
 The installer copies the helper and two bridge modules into one managed per-user
@@ -89,15 +91,20 @@ Keep personal images, device IDs, and client transcripts out of public examples.
 
 ### Calendar boundary and roadmap
 
-Main does not acquire calendars or implement a calendar privacy filter. The
-compact renderer is being reviewed in
-[#13](https://github.com/d-schmitt/copilot-pocket-printer/pull/13);
-its unmerged documentation is not a local setup dependency.
-The required daily-card provider boundary is **validated meeting times only**,
-never titles, attendees, customer/company names, locations, links, or raw
-transcripts. Optional WorkIQ acquisition belongs outside the generic printing
-core. Unavailable input must remain unavailable, not become a false zero-event
-day. Arbitrary user-supplied PNGs are not redacted by the printer.
+The merged [daily-card pipeline](daily-card.md#privacy-boundary) projects supplied
+calendar records into validated start/end intervals and availability, never
+retaining titles, attendees, customer/company names, locations, links, or raw
+transcripts in its render JSON. Supply times-only records even though the
+normalizer discards extra fields. It accepts portable timing data or a scoped
+Graph timing response; automatic WorkIQ/calendar acquisition is not implemented.
+Unavailable input stays unavailable, not a false zero-event day.
+The generic renderer accepts arbitrary template text and the printer accepts
+arbitrary PNGs; neither is an OCR or redaction service.
+
+The assembler can optionally fetch numeric Open-Meteo weather for the requested
+day, or consume injected data. Provider failures remain explicit in output
+warnings and exit status. See [daily-card policies](daily-card.md#time-and-walk-policy)
+for time boundaries, weather coverage and walk-selection limits.
 
 Future work is tracked in [rendering through MCP](https://github.com/d-schmitt/copilot-pocket-printer/issues/7),
 [canvas controls](https://github.com/d-schmitt/copilot-pocket-printer/issues/8),

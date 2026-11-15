@@ -213,9 +213,16 @@ test('typed permission failures and malformed MCP are explicit without content l
     await client.stop(); await f.stop();
   }
   const client = new MCP('/tmp/missing-cpp-test/helper.sock'); t.after(() => client.stop());
+  // Await the parsed response, not an assumed 50 ms child-process startup time.
+  const parseError = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.pending.delete(null);
+      reject(new Error('Timed out waiting for malformed-frame response.'));
+    }, 8000);
+    client.pending.set(null, response => { clearTimeout(timer); resolve(response); });
+  });
   client.process.stdin.write('{broken\n');
-  await sleep(50);
-  assert.equal(client.lines[0].error.code, -32700);
+  assert.equal((await parseError).error.code, -32700);
   client.process.stdin.write('x'.repeat(MAX_FRAME + 1));
   await once(client.process, 'exit');
   assert.equal(client.process.exitCode, 2);

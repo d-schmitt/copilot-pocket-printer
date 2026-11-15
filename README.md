@@ -23,10 +23,11 @@ and helper status. Real Copilot/helper test-pattern prints have been
 user-confirmed in both confirmation modes, including one app approval with
 no per-print helper click after explicit native opt-in.
 
-**Not yet on main:** the compact daily-card renderer is under review in
-[#13](https://github.com/d-schmitt/copilot-pocket-printer/pull/13).
-Rendering through MCP, calendar acquisition, canvas controls, and scheduled
-delivery remain [roadmap work](#what-this-showcases), not steps needed below.
+The [JSON-to-PNG renderer and daily-card example](docs/daily-card.md) also work
+from the CLI, with optional weather, times-only calendar input, walk suggestions,
+and joke, Sudoku, or line-art content. Rendering needs no helper or printer.
+Rendering through MCP, automatic calendar acquisition, canvas controls, and
+scheduled delivery remain [roadmap work](#what-this-showcases), not steps needed below.
 
 ## Try the demo
 
@@ -117,8 +118,8 @@ paper output; inspect the paper yourself.
 |---|---|---|
 | Project | Coordination and shared context | Used to develop this demo |
 | Sessions | Isolated implementation work | Used to develop this demo |
-| MCP | Client-neutral PNG preview and approved printing | Available; [card rendering planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/7) |
-| WorkIQ | Optional calendar context | [Acquisition planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9) |
+| MCP | Client-neutral PNG preview and approved printing | Available; [rendering through MCP planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/7) |
+| WorkIQ | Optional calendar context | [Timing-input adapter available](docs/daily-card.md#privacy-boundary); [automatic acquisition planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9) |
 | Canvas | Interactive preview and section controls | [Planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/8) |
 | Automation | Scheduled card delivery | [Planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9); needs an awake Mac and available printer |
 
@@ -127,11 +128,11 @@ available at Universe.
 
 ## Privacy and other clients
 
-Calendar integration is optional. Its required boundary is **validated meeting
-times only**, never titles, attendees, customer/company names, or raw transcripts.
-Main has no calendar acquisition or redaction service: arbitrary PNGs can
-contain sensitive content, and your AI client may retain tool inputs and
-previews. Use synthetic data for public demos.
+Calendar integration is optional. The daily-card assembler retains **validated
+meeting times only**, never titles, attendees, customer/company names, or raw
+transcripts. Supply timing-only input; automatic acquisition is not implemented.
+The generic renderer and printer do not redact arbitrary text or PNGs, and your
+AI client may retain tool inputs and previews. Use synthetic data for public demos.
 
 Other compatible clients can use the same [stdio MCP bridge](bridge/README.md)
 or [native CLI](docs/cli.md); neither requires Copilot or WorkIQ. For deeper

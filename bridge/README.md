@@ -23,6 +23,8 @@ initialization/version negotiation, `notifications/initialized`, `ping`,
 `tools/list`, `tools/call` and cancellation notifications. It negotiates
 2025-06-18. Older batching-era protocol versions are not advertised.
 There are no resources, prompts, rendering, sampling or task capabilities.
+The separate [card-renderer CLI](../docs/daily-card.md) can produce PNGs for
+these tools; it is not bundled into the installed MCP server.
 The [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)
 and [tool contracts](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 are the protocol references. A maintained SDK was considered first but was
@@ -311,7 +313,9 @@ rollback or hardware power-loss behavior.
 ## Offline validation
 
 See [contributor checks](../docs/development.md#offline-checks) for the shared
-Swift, process-level Python, Node protocol/receipt, and installer suites.
+Swift, renderer, process-level Python, Node protocol/receipt, and installer suites.
+`bash scripts/checks.sh` runs the complete CI entry point, including XCTest;
+`--without-xctest` explicitly omits that unavailable local runtime, not other suites.
 They use inert executors or fixtures, not Bluetooth. Offline initialization
 and `tools/list` do not prove registered-client exposure or physical printing;
 observe those separately with explicit setup and paper approvals.
