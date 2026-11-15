@@ -68,7 +68,9 @@ discovery, retained Bluetooth permission or automatic helper startup.
 
 ## Build and offline checks
 
-Requires macOS 13 or later and a Swift 5.9+ toolchain. Full Xcode provides the
+Requires macOS 13 or later and a compatible Swift toolchain; CI pins Xcode
+26.3. The Swift tools 5.9 manifest is not a claim that every older compiler can
+build the pinned dependency. Full Xcode provides the
 XCTest runtime used by the unit tests. Do not install system components without
 the machine owner's approval. The first build downloads the pinned Swift
 Package dependency; subsequent offline commands do not access a network.
@@ -122,7 +124,7 @@ with one stable check named **`Offline checks`**. After a successful
 GitHub-hosted run, that is the exact check name that can be made required in
 repository rules. This change does not modify rulesets or branch protection.
 
-The job uses supported `macos-15`, full Xcode 16.4, Node 24 and Python 3.13.
+The job uses supported `macos-15`, full Xcode 26.3, Node 24 and Python 3.13.
 External actions are pinned to verified release commits. It has read-only
 contents permission, no retained checkout credentials, no secrets, no
 `pull_request_target`, no deployment or artifact upload, a 20-minute timeout
@@ -152,9 +154,13 @@ types in named application files, not the special `main.swift` filename.
 Swift 6.1 otherwise treats that file as a top-level entrypoint and rejects the
 additional `@main`. The full-package build checks this compatibility before
 running the unchanged behavioral suites; no target or XCTest suite is skipped.
+Xcode 16.4's Swift 6.1 compiler also exhausts its type checker on the pinned
+dependency's `LuckPrinterCommands.setTimeFormat` expression. CI selects the
+runner's installed Xcode 26.3 instead of patching dependency checkouts, changing
+the verified dependency revision or relaxing compiler limits.
 
 Runner inventory and action releases were checked on 2026-11-15:
-[macOS 15 inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md),
+[macOS 15 arm64 inventory](https://github.com/actions/runner-images/blob/macos-15-arm64/20261104.0514/images/macos/macos-15-arm64-Readme.md),
 [checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
 [setup-node v7.1.0](https://github.com/actions/setup-node/releases/tag/v7.1.0),
 [setup-python v7.1.0](https://github.com/actions/setup-python/releases/tag/v7.1.0).
