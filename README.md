@@ -5,11 +5,16 @@ A portable macOS foundation for printing your own bitmap cards on the Tronic
 another AI client, or a person can use the same CLI. A daily card is one future
 example, not a hard-coded product or a requirement to use Copilot or WorkIQ.
 
-**Milestone 1 is incomplete: the repaired native adapter passes offline checks,
-and user-launched Terminal discovery has succeeded. Connected status and paper
-output remain unverified.** Print/feed require explicit per-operation approval;
-the observed Copilot app host still cannot initialize Bluetooth. There is no renderer for live data, MCP server,
-canvas, calendar integration, or automation yet.
+The end-to-end goal remains **printing from the Copilot app without copying
+commands into Terminal**. Terminal is acceptable for milestone 1 hardware
+testing only; it is not a substitute for that final in-app workflow.
+
+**Milestone 1's native Terminal physical-print checkpoint passed:** the user
+printed the test pattern once, and a photograph confirmed complete, readable
+output. **App-origin printing is not verified:** the observed Copilot app host
+still cannot initialize Bluetooth. The one-print approval is consumed; work
+stops here. There is no renderer for live data, MCP server, canvas, calendar
+integration, or automation yet.
 
 ## Build and offline checks
 
@@ -171,9 +176,11 @@ API. Do not unset it to bypass the check. The signed app needs an owner-supplied
 fix; this repository does not modify the app, permission state, or launch route.
 A preflight-only failure is not a successful scan.
 
-An independently user-launched macOS Terminal check has reported
-`DISCOVERED ONLY: Mini Pocket Printer_BLE`. That confirms advertisements on
-that launch path only, not a connection or end-to-end Copilot printing. No
+Independently user-launched macOS Terminal checks discovered
+`Mini Pocket Printer_BLE`, then connected with confirmed FF00/FF02 and FF01/FF03
+notifications and decoded model/firmware/battery/paper replies. A subsequent
+single approved test printed successfully, as documented below. This verifies
+the native Terminal path, not end-to-end Copilot app printing. No
 permission-dialog owner was reported. The specific device UUID is supplied
 at runtime, not committed as a default.
 
@@ -203,7 +210,8 @@ actual owner; Terminal discovery success does not identify that permission
 owner or repair the app-host defect. If approval takes longer than the bounded startup window, explicitly
 rerun status afterward. No automatic retry.
 
-The next hardware checkpoint is:
+For another setup, use this hardware-check procedure with fresh approval.
+The completed test below does not authorize another print:
 
 1. Use the reviewed repair pin and passing offline checks in the user-approved
    host. The Copilot app's missing metadata remains a separate blocker to
@@ -222,6 +230,32 @@ The next hardware checkpoint is:
 Queue empty, bytes handed to CoreBluetooth, `01 nn` credits, or the unsolicited
 `AA 0D 0A` service frame are **not proof that paper printed**. Current dry-run
 success explicitly states that nothing was transmitted.
+
+### Milestone 1 verification result
+
+On **2026-11-15 at approximately 15:58 Europe/Berlin**, the single approved
+384x288 test pattern was printed from the user's independently opened Terminal.
+The implementation was local commit `869a838`, using the repair pin below.
+The evidence is separated by what it proves:
+
+| Evidence | Observation | Proves |
+|---|---|---|
+| Connected status | FF00/FF02, FF01/FF03; model `A2Y`, firmware `V1.06LY`, battery 96%, raw paper reply `0x00` | Connection, confirmed notifications and decoded replies, not paper readiness |
+| CLI output | `SUBMITTED ONLY`, 13,943 protocol bytes, local drain, 2.0-second observation, disconnect without retry | Local transport submission, not physical completion by itself |
+| User-supplied photograph, directly compared with the reference PNG by the coordinating Project | Complete enclosing border; upright readable header/body/footer; all six patterned rows 04-09; `Fuesse / Groesse / Aerger`; bottom label; no missing full bands or clipped content | Actual readable paper output for the one test |
+
+Fine strokes are lighter than the heading but readable. Exact physical
+dimensions and feed length were **not measured**; 80 clearance dots and
+approximately 46 mm total are the commanded/nominal values, not measured
+results. The native Terminal checkpoint passes on the combined evidence,
+especially the photograph, not merely on queue submission.
+
+The one-operation approval is consumed. No further print, feed, retry, or later
+milestone is authorized by this result. App-origin printing remains unverified
+and blocked by the Copilot host's missing Bluetooth usage metadata. The
+application changes remain local; no application push or pull request was made.
+The required in-app print workflow remains unfinished. No helper, MCP server,
+canvas, or later-milestone work has been started by this verification.
 
 ### Reviewed repair dependency
 
@@ -261,8 +295,8 @@ queued work and invalidates stale callbacks. The CLI additionally verifies the
 exact FF00 profile, installs observers before operations, consumes emitted
 Combine values rather than willSet property reads, and submits all segments in
 one atomic call. It tracks its own pending/drained cycle so a battery-query
-drain cannot finish the job. These are hardware-free correctness checks, not
-a claim that the repaired path has printed on this device.
+drain cannot finish the job. Those hardware-free correctness checks are
+separate from the one-device Terminal/photo verification recorded above.
 
 ## One portable core, optional integrations
 
@@ -291,7 +325,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 
 | Milestone | Status / checkpoint |
 |---|---|
-| 1. CLI test pattern on real hardware | Repaired adapter verified offline; Terminal discovery observed. Connected status and paper output still pending; app-origin BLE remains blocked. |
+| 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Stop here; approval consumed. App-origin BLE remains blocked and unverified. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |
