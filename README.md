@@ -27,6 +27,25 @@ There is no renderer for live data, canvas, calendar integration or automation.
 See [native helper and MCP setup](bridge/README.md) for the verified path and
 its setup/approval requirements.
 
+## Stable installation from main
+
+The helper and bridge source are on `main`; `.build` apps are generated,
+untracked artifacts. Normal setup uses **one per-user installation**, not a
+running app or MCP server inside a branch/worktree. From a reviewed, up-to-date
+checkout of `main`, `python3 scripts/install_printer.py` builds and verifies a
+standalone package under `.build/installation` only. It does not install,
+launch anything, change MCP configuration or access Bluetooth.
+
+After explicit installation approval, `--install` copies both runtimes into
+`~/Applications/Copilot Pocket Printer/`: `Pocket Printer Helper.app` and
+`bridge/server.mjs` with its local module. That directory is independent of the
+source checkout. The script prints exact proposed client configuration without
+applying it. Node 22+ must remain installed separately. See the
+[installation and update procedure](bridge/README.md#setup-with-explicit-approval-gates)
+for the separate Finder launch, permission and client-registration checkpoints.
+Stable paths remove the worktree dependency; they do not guarantee client tool
+discovery, retained Bluetooth permission or automatic helper startup.
+
 ## Build and offline checks
 
 Requires macOS 13 or later and a Swift 5.9+ toolchain. Full Xcode provides the
