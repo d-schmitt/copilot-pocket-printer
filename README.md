@@ -14,8 +14,12 @@ the paper output looked exactly as expected.
 The earlier native Terminal/photo checkpoint also passed. Direct Bluetooth
 initialization in the Copilot host remains blocked by its missing usage
 metadata; the verified workflow keeps BLE in the separately authorized helper,
-without modifying Copilot or bypassing TCC. **The helper must remain open and
-each job still needs native-window approval.** Development rebuilds may request
+without modifying Copilot or bypassing TCC. **The helper must remain open.**
+Native-window approval remains the default. A new persistent helper opt-in can
+trust AI-client per-job confirmations instead, removing the second click.
+That change is staged locally, not activated or physically verified; it trusts
+any same-user program claiming approval, not an attested human click.
+Development rebuilds may request
 permission again, as observed with the scan-only probe. Both test-print
 approvals are consumed; this result authorizes no further printing or features.
 There is no renderer for live data, canvas, calendar integration or automation.
@@ -297,10 +301,13 @@ The receipt remains **`paper_confirmed: false`** and was not edited to manufactu
 success. Physical success comes from the user's report, not a firmware
 acknowledgment or a new photograph inspected by this implementation session.
 Exact dimensions/feed length were not measured; approximately 46 mm is nominal.
-Keep the helper open; each future job needs its own approval, including the
-native-window click. Ad-hoc rebuild permission persistence remains unproven.
-The new single-print approval is consumed. Work stops here without further
-paper actions, later milestones, publication or merge.
+The tested mode used the native-window click as well as AI-client approval.
+The subsequent user-requested single-confirmation option is described in
+[confirmation modes and trust](bridge/README.md#confirmation-modes-and-trust).
+It has not changed the live helper or this consumed test receipt.
+Ad-hoc rebuild permission persistence remains unproven. This single-print
+approval is consumed; it authorizes no further paper actions, later milestones,
+publication or merge.
 
 ## Native permission feasibility probe
 
@@ -397,7 +404,8 @@ No paper action is authorized by this scan-only procedure.
 
 The separately approved [helper/MCP gate](bridge/README.md) now implements that
 independent-process boundary, private peer-checked Unix IPC, revalidated PNG
-bytes, one admitted job, durable non-replay receipts and native per-job approval.
+bytes, one admitted job, durable non-replay receipts and native per-job approval
+by default, with an explicit AI-client-confirmation opt-in.
 It never spawns the helper as the MCP child. Same-user IPC is not isolation.
 The print-capable helper was independently launched and authorized, and the
 bridge was manually registered with Copilot. The separately approved real
@@ -476,7 +484,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 |---|---|
 | 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. Direct Copilot-host BLE remains blocked. |
 | Permission feasibility gate | Finder discovery and repeat/quit observed. Changed build requested fresh permission, then discovered; reauthorization works, update permission retention failed. |
-| Native helper and MCP gate | Passed: own native permission, real Copilot status/preview/submission, native job approval and user-confirmed paper output. Helper stays open; per-job native approval required. Test approval consumed. |
+| Native helper and MCP gate | Native-confirmation path passed: own permission, real Copilot tools and user-confirmed output. Helper stays open. Optional AI-client-only confirmation is staged, not activated or physically verified. Test approval consumed. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |

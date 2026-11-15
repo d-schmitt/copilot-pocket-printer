@@ -14,10 +14,16 @@ confirmation are recorded in the [verification result](../README.md#copilot-in-a
 The transport receipt still says `submitted_only`, `paper_confirmed: false`;
 user confirmation is separate evidence, not a receipt rewrite.
 
-**Keep the helper open and approve each job in its native window.** Closing it
-produces `helper_not_running`; the bridge does not relaunch it. Development
-rebuilds may require fresh permission. The successful test approval is consumed,
-and the setup procedure below does not authorize another paper operation.
+That successful test used **native confirmation**, the default. The optional
+**AI-client confirmation** mode is now implemented and staged, but has not
+been activated or physically verified. It removes the second per-print helper
+click after a one-time helper opt-in; see the trust boundary below.
+
+**Keep the helper open.** Closing it produces `helper_not_running`; the bridge
+does not relaunch it. Development rebuilds may require fresh Bluetooth
+permission. These setup prompts are distinct from per-print confirmation.
+The successful test approval is consumed; this change and the setup procedure
+below do not authorize another paper operation.
 
 The server implements the narrow JSON-RPC/MCP stdio subset it advertises:
 initialization/version negotiation, `notifications/initialized`, `ping`,
@@ -33,9 +39,9 @@ or a claim of conformance to every optional MCP feature.
 
 | Tool | Effect |
 |---|---|
-| `printer_helper_status` | Helper availability, controller/authorization state and active job ID; no Bluetooth initialization, scan or printer query. |
+| `printer_helper_status` | Helper availability, controller/authorization state, active job ID, effective `confirmation_mode` and any `confirmation_preference_error`; no Bluetooth initialization, scan or printer query. |
 | `inspect_png` | Revalidate bounded PNG bytes in the helper; return metadata and the exact thresholded print-bitmap preview. No card rendering or BLE. |
-| `submit_png` | Admit one job for native per-job approval. Requires explicit device UUID, stable job UUID, PNG bytes and `paper_approved: true`. Does not immediately print. |
+| `submit_png` | Submit one job with explicit device UUID, stable job UUID, PNG bytes and `paper_approved: true`. Native mode stages it; opted-in AI-client mode may begin printing immediately. |
 | `get_print_job` | Return the durable receipt for that same job UUID, including uncertainty after restart. |
 | `cancel_print_job` | Cancel before approval, or request interruption; never claim sent paper was undone. |
 
@@ -49,6 +55,39 @@ black/white bitmap that will be printed, including white composition and the
 This is not a newly rendered card. Tool input/output may be retained by the calling AI
 client; use only content you intend to share with that client.
 
+## Confirmation modes and trust
+
+Native confirmation is the default and remains available: each job waits for
+**Approve this one print** in the helper. To use only the AI client's per-print
+confirmation, the user must explicitly enable **Use AI-client confirmations
+(skip per-print helper click)** once in the helper UI.
+
+**Opt-in trusts every program running under the same macOS user account.**
+Any such program can submit `paper_approved: true` and start a fresh valid job.
+The helper cannot distinguish Copilot from other same-user callers or verify
+that a human clicked. The AI client must obtain explicit per-job approval;
+if it is configured to **Always allow**, its prompt may disappear. This is not
+a non-suppressible human gate or app attestation. A per-user token file would
+be readable by those same callers and would not provide that protection, so
+no token scheme was added.
+
+The effective `confirmation_mode` is `native` or `ai_client`. The helper saves
+the explicit selection in private `confirmation.json` alongside its receipts,
+using the existing atomic synced file mechanism. It applies a selection only
+after a successful save. Missing preferences default to native; read/parse/write
+failures visibly fall back to native and are returned in helper status. A failed
+save may leave the previous disk setting intact, so a later restart can reload
+that old value. Repair the setting through the helper UI, not by deleting
+receipts. No tool can change the preference.
+
+Only a **fresh admission** captures the selected mode. AI-client mode uses
+the same guarded durable approval-to-execution path in that handler turn,
+returning the current receipt, normally `in_progress`, not a stale
+`awaiting_approval`. Toggling never executes a pre-existing staged job, and
+startup never resumes work. Duplicates still return their original receipt.
+The default native mode's pending approval expires after five minutes.
+**Stop remaining work** cannot undo bytes already submitted in either mode.
+
 ## Setup, with explicit approval gates
 
 Build from the repository root:
@@ -57,6 +96,13 @@ Build from the repository root:
 swift build
 python3 scripts/build_printer_helper.py
 ```
+
+If the existing helper must remain running, use
+`python3 scripts/build_printer_helper.py --stage` instead. This packages
+`.build/staged/Pocket Printer Helper.app` without changing
+`.build/Pocket Printer Helper.app`. Do not launch the staged copy or replace
+the active bundle until the user quits the old helper and approves the switch.
+The current single-confirmation change stops at this staged boundary.
 
 The app is `.build/Pocket Printer Helper.app`. It is separate from the original
 scan-only **Pocket Printer Probe.app**, with a new bundle ID and a truthful
@@ -87,11 +133,11 @@ observed in the real client; the offline harness is not a Copilot tool call.
 For a **new, separately approved** physical test, choose a job UUID once,
 keep it for every status query, use the discovered device UUID and set
 `paper_approved: true` only after that approval. The helper window shows the
-image, digest, device, dimensions and nominal paper use. The user must also
-click **Approve this one print** for that particular pending job. This is an
-intentional independent safety gate, not a Terminal-per-print workaround.
-Pending approval expires after five minutes without sending. Each approved job
-uses a fresh one-shot `PrinterClient` and the existing repaired transport.
+image, digest, device, dimensions and nominal paper use. In native mode the
+user must also click **Approve this one print**. In opted-in AI-client mode
+submission may start immediately without that click, so review `inspect_png`
+and obtain the AI-client approval before submitting. Each approved job uses
+a fresh one-shot `PrinterClient` and the existing repaired transport.
 
 Do not resubmit or create a replacement ID after a timeout/disconnect. Query
 the original ID. `submitted_only` means local transport drain and required
@@ -104,7 +150,8 @@ The helper creates a 0700 socket directory and a 0600 Unix socket. It validates
 the connecting process's user with macOS `getpeereid`; the bridge also checks
 socket/directory ownership, type and modes. **Same-user access is not isolation**:
 another process running as that user can inspect or tamper with the files.
-The native approval screen, not a client-supplied Boolean alone, gates paper.
+Native mode uses an independent approval screen. AI-client mode deliberately
+trusts the client-supplied approval assertion from any same-user caller.
 
 Each connection carries one length-prefixed JSON request, maximum 2 MiB.
 At most four connections are handled concurrently, with a three-second

@@ -7,10 +7,10 @@ const uuid = { type: 'string', format: 'uuid' };
 const png = { type: 'string', minLength: 1, maxLength: Math.ceil(MAX_PNG / 3) * 4,
   description: 'Strict base64 of an existing 384-dot PNG, at most 1 MiB. No file paths.' };
 const definitions = [
-  ['printer_helper_status', 'helper_status', {}, 'Inspect helper availability and native permission state. Does not initialize Bluetooth, scan, connect or print.', true],
+  ['printer_helper_status', 'helper_status', {}, 'Inspect helper availability, native permission state, current confirmation_mode and preference errors. Does not initialize Bluetooth, scan, connect or print.', true],
   ['inspect_png', 'inspect_png', { png_base64: png }, 'Validate an existing PNG in the helper and return its preview. No renderer and no Bluetooth access.', true],
   ['submit_png', 'submit_png', { job_id: uuid, device_id: uuid, png_base64: png, paper_approved: { type: 'boolean', const: true } },
-    'Stage exactly one explicitly user-approved PNG job. Use a new stable UUID only for a genuinely new authorization. The user must also approve this specific job in the helper window. Never automatically retry a lost reply or replace its ID; query get_print_job. This tool does not confirm paper output.', false],
+    'Submit exactly one explicitly user-approved PNG job. May begin printing immediately when the helper has opted into AI-client confirmations; native mode waits for a helper-window click. Check printer_helper_status for confirmation_mode. Obtain explicit approval in the AI client before paper_approved:true; the helper cannot verify a human click or distinguish same-user callers. Always allow can remove the client prompt. Use a new stable UUID only for a genuinely new authorization. Never automatically retry a lost reply or replace its ID; query get_print_job. This tool does not confirm paper output.', false],
   ['get_print_job', 'job_status', { job_id: uuid }, 'Inspect the durable receipt for the original job ID after submission, timeout or restart. Unknown is not permission to print again.', true],
   ['cancel_print_job', 'cancel_job', { job_id: uuid }, 'Cancel a pending job or request interruption. Already submitted paper bytes cannot be undone; inspect its final receipt.', false]
 ];
@@ -93,7 +93,7 @@ async function handle(message) {
       protocolVersion: versions.includes(params.protocolVersion) ? params.protocolVersion : versions[0],
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'pocket-printer', version: '0.1.0' },
-      instructions: 'User-launched native helper required. No BLE in this process. Never automatically replay paper jobs; query the original durable job ID after uncertainty. Native per-job approval remains required.'
+      instructions: 'User-launched native helper required. No BLE in this process. Obtain explicit per-job approval in the AI client. Check confirmation_mode: native requires a helper click; opted-in ai_client may print immediately on paper_approved:true. The helper trusts any same-user caller and cannot attest a human click; Always allow may suppress client confirmations. Never automatically replay paper jobs; query the original durable job ID after uncertainty.'
     } }); return;
   }
   if (state !== 'ready') { rpcError(id, -32002, 'Initialize and send notifications/initialized first.'); return; }

@@ -13,6 +13,11 @@ public enum HelperLimits {
     public static let receipts = 4096
 }
 
+public enum ConfirmationMode: String, Codable, Sendable {
+    case native
+    case aiClient = "ai_client"
+}
+
 public struct HelperRequest: Decodable {
     public let version: Int
     public let request_id: UUID
@@ -67,6 +72,7 @@ public struct JobReceipt: Codable, Sendable {
     public var updated_at: Date
     public var paper_confirmed = false
     public var outcome_acknowledged: Bool? = false
+    public var confirmation_mode: ConfirmationMode?
 }
 
 public struct HelperHealth: Codable, Sendable {
@@ -74,6 +80,8 @@ public struct HelperHealth: Codable, Sendable {
     public let active_job_id: UUID?
     public let safety_blocked: Bool
     public let unresolved_job_ids: [UUID]
+    public let confirmation_mode: ConfirmationMode
+    public let confirmation_preference_error: HelperFailure?
     public let message: String
 }
 

@@ -93,6 +93,7 @@ test('actual MCP lifecycle, tool contracts, inspection and helper-unavailable er
   assert.equal((await client.tool('unknown')).error.code, -32602);
   const health = await client.tool('printer_helper_status');
   assert.equal(health.value.health.bluetooth, 'ready');
+  assert.equal(health.value.health.confirmation_mode, 'native');
   const inspected = await client.tool('inspect_png', { png_base64: png });
   assert.equal(inspected.value.image.width, 384);
   assert.equal(inspected.value.image.height, 288);
@@ -141,6 +142,28 @@ test('real IPC admission, duplicate identity, busy and restart receipts with ine
   const blocked = await client.tool('printer_helper_status');
   assert.equal(blocked.value.health.safety_blocked, true);
   assert.equal((await client.tool('submit_png', { ...fields, job_id: randomUUID() })).value.code, 'safety_blocked');
+});
+
+test('opted-in client confirmation starts once without native or fixture approval', async t => {
+  const f = await fixture(t, 'ai-client');
+  const client = new MCP(f.socketPath); t.after(() => client.stop());
+  await client.initialize();
+  assert.equal((await client.tool('printer_helper_status')).value.health.confirmation_mode, 'ai_client');
+  const fields = { job_id: randomUUID(), device_id: randomUUID(), png_base64: png, paper_approved: true };
+  assert.equal((await client.tool('submit_png', { ...fields, paper_approved: false })).value.code, 'paper_approval_required');
+  const admitted = await client.tool('submit_png', fields);
+  assert.equal(admitted.value.receipt.state, 'in_progress');
+  assert.equal(admitted.value.receipt.confirmation_mode, 'ai_client');
+  assert.equal((await client.tool('submit_png', fields)).value.receipt.state, 'in_progress');
+  assert.equal((await client.tool('submit_png', { ...fields, job_id: randomUUID() })).value.code, 'busy');
+  await sleep(700);
+  const done = await client.tool('get_print_job', { job_id: fields.job_id });
+  assert.equal(done.value.receipt.state, 'submitted_only');
+  assert.match(done.value.receipt.message, /inert executor calls=1/);
+  assert.equal(done.value.receipt.paper_confirmed, false);
+  await f.stop();
+  await fixture(t, 'ai-client', f.directory);
+  assert.equal((await client.tool('submit_png', fields)).value.receipt.state, 'submitted_only');
 });
 
 test('peer credentials, directory/socket modes and malformed bounded frames', async t => {

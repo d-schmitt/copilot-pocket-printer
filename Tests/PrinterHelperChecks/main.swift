@@ -39,16 +39,20 @@ struct HelperChecks {
         let mode = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "ready"
         let store = try ReceiptStore(directory: root.appendingPathComponent("receipts"))
         var calls = 0
-        let service = try HelperService(store: store, bluetooth: { mode == "wrong-peer" ? "ready" : mode }) { _, _ in
+        let service = try HelperService(store: store, bluetooth: { ["wrong-peer", "ai-client"].contains(mode) ? "ready" : mode }) { _, _ in
             calls += 1
             try await Task.sleep(nanoseconds: 500_000_000)
             return "FAKE SUBMITTED ONLY; inert executor calls=\(calls). No Bluetooth or paper."
         }
-        service.onChange = { [weak service] in
-            guard service?.active?.state == "awaiting_approval" else { return }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                service?.approveActive()
+        if mode == "ai-client" {
+            service.setConfirmationMode(.aiClient)
+        } else {
+            service.onChange = { [weak service] in
+                guard service?.active?.state == "awaiting_approval" else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    service?.approveActive()
+                }
             }
         }
         let server = try UnixServer(directory: root.appendingPathComponent("socket"),
@@ -114,17 +118,7 @@ struct HelperChecks {
         let admitted = service.handle(try request("submit_png", fields))
         try check(admitted.result?.receipt?.state == "awaiting_approval" && calls == 0, "MCP alone cannot physically print")
         let id = admitted.result!.receipt!.job_id
-        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--preview" {
-            let view = HelperView(frame: NSRect(x: 0, y: 0, width: 680, height: 680))
-            view.appearance = NSAppearance(named: .aqua)
-            view.render(bluetooth: "ready (INERT OFFLINE PREVIEW)", active: admitted.result?.receipt, latest: nil,
-                        preview: service.preview, blocked: false, fatal: nil)
-            view.layoutSubtreeIfNeeded()
-            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CheckError.assertion("preview bitmap") }
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CheckError.assertion("preview encoding") }
-            try data.write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
-        }
+        try renderPreview(service)
         try check(try store.read(id) != nil, "durable admission precedes physical work")
         var overwrite = admitted.result!.receipt!
         overwrite.state = "uncertain"
@@ -208,6 +202,144 @@ struct HelperChecks {
         } catch let error as HelperFailure { try check(error.code == "receipt_storage_failed", "corrupt receipt fails startup closed") }
         corrupt.close()
         service.close(); restarted.close(); afterCrash.close()
+        try await confirmationChecks(root: root, fields: fields)
         print("PASS \(assertionCount) helper assertions: approval, PNG bounds, errors, durable IDs, busy, cancellation and restart uncertainty. No Bluetooth.")
+    }
+
+    @MainActor static func renderPreview(_ service: HelperService, suffix: String = "") throws {
+        guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--preview" else { return }
+        let view = HelperView(frame: NSRect(x: 0, y: 0, width: 760, height: 960))
+        view.render(bluetooth: "ready", active: service.active, latest: service.latest,
+                    preview: service.preview, blocked: service.safetyBlocked, fatal: nil,
+                    canAcknowledge: service.canAcknowledge, acknowledgmentUnavailableReason: service.acknowledgmentUnavailableReason,
+                    confirmationMode: service.confirmationMode, confirmationPreferenceError: service.confirmationPreferenceError)
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CheckError.assertion("preview bitmap") }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CheckError.assertion("preview encoding") }
+        let output = URL(fileURLWithPath: CommandLine.arguments[2])
+        let path = suffix.isEmpty ? output : output.deletingPathExtension().appendingPathExtension(suffix + ".png")
+        try data.write(to: path)
+    }
+
+    @MainActor static func confirmationChecks(root: URL, fields: [String: Any]) async throws {
+        let directory = root.appendingPathComponent("confirmation")
+        let store = try ReceiptStore(directory: directory)
+        var calls = 0
+        var radio = "ready"
+        let service = try HelperService(store: store, bluetooth: { radio }) { _, _ in
+            calls += 1
+            try await Task.sleep(nanoseconds: 100_000_000)
+            return "FAKE SUBMITTED ONLY"
+        }
+        try check(service.confirmationMode == .native && service.confirmationPreferenceError == nil, "absent preference defaults to native without an error")
+        let staged = service.handle(try request("submit_png", fields)).result!.receipt!
+        service.setConfirmationMode(.aiClient)
+        try check(try store.loadConfirmationMode() == .aiClient, "explicit client opt-in persists")
+        try check(service.active?.state == "awaiting_approval" && calls == 0, "mode change cannot execute pre-existing staged job")
+        try check(service.handle(try request("submit_png", fields)).result?.receipt?.state == "awaiting_approval" && calls == 0, "repeated staged ID does not gain client-mode approval")
+        service.cancelActive()
+        let health = service.handle(try request("helper_status")).result!.health!
+        try check(health.confirmation_mode == .aiClient && health.confirmation_preference_error == nil, "status exposes effective opted-in mode")
+        var fresh = fields; fresh["job_id"] = UUID().uuidString
+        var missing = fresh; missing.removeValue(forKey: "paper_approved")
+        try check(!service.handle(try request("submit_png", missing)).ok && calls == 0, "client mode rejects missing approval")
+        var denied = fresh; denied["paper_approved"] = false
+        try check(service.handle(try request("submit_png", denied)).error?.code == "paper_approval_required" && calls == 0, "client mode rejects false approval")
+        var invalid = fresh; invalid["png_base64"] = "malformed"
+        try check(!service.handle(try request("submit_png", invalid)).ok && calls == 0, "client mode rejects invalid image before execution")
+        for state in ["denied", "off", "permission_pending"] {
+            radio = state
+            try check(service.handle(try request("submit_png", fresh)).error?.code == "bluetooth_\(state)" && calls == 0, "client mode preserves Bluetooth guard")
+        }
+        radio = "ready"
+        let admitted = service.handle(try request("submit_png", fresh)).result!.receipt!
+        try check(admitted.state == "in_progress" && admitted.confirmation_mode == .aiClient && calls == 0, "same-turn admission returns current persisted state before scheduled execution")
+        try renderPreview(service, suffix: "ai-client")
+        try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "in_progress", "same in-flight ID cannot schedule another execution")
+        var other = fresh; other["job_id"] = UUID().uuidString
+        try check(service.handle(try request("submit_png", other)).error?.code == "busy", "client mode preserves single active job")
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        try check(calls == 1 && service.latest?.state == "submitted_only", "client-approved submission executes once without any native or test-side approval")
+        try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "submitted_only" && calls == 1, "completed client-approved ID never replays")
+        service.close()
+
+        // Model process loss with a durable unapproved receipt, without executing it.
+        try store.save(staged)
+        let restarted = try HelperService(store: store, bluetooth: { "ready" }) { _, _ in
+            throw CheckError.assertion("restart replay")
+        }
+        try check(restarted.confirmationMode == .aiClient && restarted.active == nil, "startup loads opt-in but schedules no work")
+        try check(restarted.handle(try request("submit_png", fields)).result?.receipt?.state == "cancelled_before_submission", "restart cancels unapproved receipt even with saved client mode")
+        try check(restarted.handle(try request("submit_png", fresh)).result?.receipt?.state == "submitted_only", "restart preserves completed identity")
+        restarted.close()
+        try store.save(admitted)
+        let uncertain = try HelperService(store: store, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("uncertain replay") }
+        try check(uncertain.safetyBlocked && uncertain.handle(try request("submit_png", other)).error?.code == "safety_blocked", "client mode restart preserves uncertain-job block")
+        uncertain.close()
+
+        let failureDirectory = root.appendingPathComponent("confirmation-failures")
+        let failureStore = try ReceiptStore(directory: failureDirectory)
+        let failClosed = try HelperService(store: failureStore, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("preference failure executed") }
+        failClosed.setConfirmationMode(.aiClient)
+        let preference = failureDirectory.appendingPathComponent("confirmation.json")
+        try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: preference.path)
+        failClosed.setConfirmationMode(.aiClient)
+        let failedHealth = failClosed.handle(try request("helper_status")).result!.health!
+        try check(failedHealth.confirmation_mode == .native && failedHealth.confirmation_preference_error?.code == "confirmation_preference_write_failed", "failed save is visible and falls closed before applying opt-in")
+        try check(failClosed.handle(try request("submit_png", fields)).result?.receipt?.state == "awaiting_approval", "failed save cannot auto-execute future jobs")
+        try renderPreview(failClosed, suffix: "preference-error")
+        failClosed.close()
+        let unreadable = try HelperService(store: failureStore, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("unreadable preference executed") }
+        try check(unreadable.confirmationMode == .native && unreadable.confirmationPreferenceError?.code == "confirmation_preference_read_failed", "unsafe/unreadable preference defaults visibly to native")
+        unreadable.close()
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: preference.path)
+        for content in ["{broken", "{\"confirmation_mode\":\"unknown\"}", "{\"confirmation_mode\":true}", "{\"confirmation_mode\":\"ai_client\",\"extra\":1}"] {
+            try Data(content.utf8).write(to: preference)
+            let malformed = try HelperService(store: failureStore, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("malformed preference executed") }
+            try check(malformed.confirmationMode == .native && malformed.confirmationPreferenceError != nil, "malformed preference never grants approval")
+            var unapproved = fields; unapproved["job_id"] = UUID().uuidString
+            try check(malformed.handle(try request("submit_png", unapproved)).result?.receipt?.state == "awaiting_approval", "malformed preference requires native confirmation on future job")
+            malformed.close()
+        }
+        let repair = try HelperService(store: failureStore, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("preference repair executed") }
+        repair.setConfirmationMode(.aiClient)
+        try check(repair.confirmationMode == .aiClient && repair.confirmationPreferenceError == nil, "explicit successful save repairs a malformed preference")
+        repair.setConfirmationMode(.native)
+        try check(try failureStore.loadConfirmationMode() == .native, "native mode can be restored persistently")
+        repair.close()
+        let fifoDirectory = root.appendingPathComponent("confirmation-fifo")
+        let fifoStore = try ReceiptStore(directory: fifoDirectory)
+        try check(mkfifo(fifoDirectory.appendingPathComponent("confirmation.json").path, 0o600) == 0, "create inert non-regular preference fixture")
+        let fifo = try HelperService(store: fifoStore, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("non-regular preference executed") }
+        try check(fifo.confirmationMode == .native && fifo.confirmationPreferenceError != nil, "non-regular preference cannot block reading or enable client mode")
+        fifo.setConfirmationMode(.aiClient)
+        try check(fifo.confirmationMode == .native && fifo.confirmationPreferenceError?.code == "confirmation_preference_write_failed", "non-regular preference cannot block saving or apply opt-in")
+        fifo.close()
+
+        let radioStore = try ReceiptStore(directory: root.appendingPathComponent("confirmation-radio-change"))
+        var radioReads = 0
+        let radioChanged = try HelperService(store: radioStore, bluetooth: {
+            radioReads += 1
+            return radioReads == 1 ? "ready" : "off"
+        }) { _, _ in throw CheckError.assertion("radio-off execution") }
+        radioChanged.setConfirmationMode(.aiClient)
+        try check(radioChanged.handle(try request("submit_png", fields)).result?.receipt?.state == "cancelled_before_submission", "shared funnel rechecks Bluetooth and returns current cancellation, not stale admission")
+        radioChanged.close()
+
+        let cancelledStore = try ReceiptStore(directory: root.appendingPathComponent("confirmation-cancel"))
+        let cancelled = try HelperService(store: cancelledStore, bluetooth: { "ready" }) { _, _ in
+            try await Task.sleep(nanoseconds: 100_000_000)
+            return "FAKE SUBMITTED ONLY"
+        }
+        cancelled.setConfirmationMode(.aiClient)
+        _ = cancelled.handle(try request("submit_png", fields))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        cancelled.cancelActive()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        try check(cancelled.latest?.state == "uncertain" && cancelled.safetyBlocked, "client-approved cancellation retains uncertainty after work may have started")
+        try check(cancelled.handle(try request("submit_png", other)).error?.code == "safety_blocked", "cancelled client work cannot overlap a new job")
+        cancelled.close()
     }
 }

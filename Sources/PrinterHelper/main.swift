@@ -8,7 +8,7 @@ final class HelperDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var service: HelperService?
     private var server: UnixServer?
     private var window: NSWindow?
-    private let view = HelperView(frame: NSRect(x: 0, y: 0, width: 680, height: 680))
+    private let view = HelperView(frame: NSRect(x: 0, y: 0, width: 760, height: 900))
     private var fatal: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,9 +16,10 @@ final class HelperDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.onApprove = { [weak self] in self?.service?.approveActive() }
         view.onCancel = { [weak self] in self?.service?.cancelActive() }
         view.onAcknowledge = { [weak self] in self?.service?.acknowledgeUncertainty() }
+        view.onConfirmationMode = { [weak self] mode in self?.service?.setConfirmationMode(mode) }
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Pocket Printer Helper"
-        window.contentView = view; window.minSize = NSSize(width: 680, height: 700)
+        window.contentView = view; window.minSize = NSSize(width: 760, height: 860)
         window.isReleasedWhenClosed = false; window.delegate = self
         self.window = window
         authorization.changed = { [weak self] in self?.refresh() }
@@ -46,7 +47,9 @@ final class HelperDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.render(bluetooth: authorization.state, active: service?.active, latest: service?.latest,
                     preview: service?.preview, blocked: service?.safetyBlocked ?? true, fatal: fatal,
                     canAcknowledge: service?.canAcknowledge == true,
-                    acknowledgmentUnavailableReason: service?.acknowledgmentUnavailableReason)
+                    acknowledgmentUnavailableReason: service?.acknowledgmentUnavailableReason,
+                    confirmationMode: service?.confirmationMode ?? .native,
+                    confirmationPreferenceError: service?.confirmationPreferenceError)
     }
     func windowWillClose(_ notification: Notification) { stop() }
     func applicationWillTerminate(_ notification: Notification) { stop() }

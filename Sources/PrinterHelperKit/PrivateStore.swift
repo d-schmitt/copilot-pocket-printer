@@ -26,7 +26,7 @@ func secureOpen(_ path: String, flags: Int32) throws -> Int32 {
     guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
           info.st_uid == getuid(), info.st_mode & 0o777 == 0o600, info.st_nlink == 1 else {
         close(fd)
-        throw HelperFailure("unsafe_permissions", "Receipt files must be private regular files, not links.")
+        throw HelperFailure("unsafe_permissions", "Helper storage files must be private regular files, not links.")
     }
     return fd
 }
@@ -44,6 +44,55 @@ public final class ReceiptStore {
         }
     }
     deinit { flock(lockFD, LOCK_UN); close(lockFD) }
+
+    private struct ConfirmationPreference: Codable {
+        let confirmation_mode: ConfirmationMode
+    }
+
+    public func loadConfirmationMode() throws -> ConfirmationMode {
+        do {
+            let path = directory.appendingPathComponent("confirmation.json").path
+            var info = stat()
+            if lstat(path, &info) != 0 {
+                guard errno == ENOENT else { throw HelperFailure("preference_read_failed", "Cannot inspect confirmation preference.") }
+                return .native
+            }
+            let fd = try secureOpen(path, flags: O_RDONLY | O_NONBLOCK)
+            defer { close(fd) }
+            var data = Data(count: 1025)
+            let count = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            guard count > 0, count <= 1024 else {
+                throw HelperFailure("preference_read_failed", "Confirmation preference is empty, oversized or unreadable.")
+            }
+            data.count = count
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  Set(object.keys) == ["confirmation_mode"] else {
+                throw HelperFailure("preference_parse_failed", "Invalid confirmation preference fields.")
+            }
+            return try JSONDecoder().decode(ConfirmationPreference.self, from: data).confirmation_mode
+        } catch {
+            throw HelperFailure("confirmation_preference_read_failed",
+                "Cannot load confirmation preference: \(error.localizedDescription) Using native confirmation; save a selection in the helper to repair it.")
+        }
+    }
+
+    public func saveConfirmationMode(_ mode: ConfirmationMode) throws {
+        do {
+            let target = directory.appendingPathComponent("confirmation.json")
+            var info = stat()
+            if lstat(target.path, &info) == 0 {
+                let fd = try secureOpen(target.path, flags: O_RDONLY | O_NONBLOCK)
+                close(fd)
+            } else if errno != ENOENT {
+                throw HelperFailure("preference_write_failed", "Cannot inspect confirmation preference.")
+            }
+            let data = try JSONEncoder().encode(ConfirmationPreference(confirmation_mode: mode))
+            try writePrivateData(data, to: target, exclusive: false)
+        } catch {
+            throw HelperFailure("confirmation_preference_write_failed",
+                "Cannot save confirmation preference: \(error.localizedDescription) Using native confirmation for this session; restart may load the last saved mode.")
+        }
+    }
 
     public func read(_ id: UUID) throws -> JobReceipt? {
         let path = directory.appendingPathComponent(id.uuidString.lowercased() + ".json").path
@@ -103,6 +152,10 @@ public final class ReceiptStore {
         }
         let data = try HelperJSON.encoder().encode(receipt)
         guard data.count <= 8192 else { throw HelperFailure("receipt_storage_failed", "Receipt exceeds the storage bound; printing is blocked.") }
+        try writePrivateData(data, to: target, exclusive: new)
+    }
+
+    private func writePrivateData(_ data: Data, to target: URL, exclusive: Bool) throws {
         let path = directory.appendingPathComponent(".\(UUID().uuidString).tmp")
         let fd = try secureOpen(path.path, flags: O_WRONLY | O_CREAT | O_EXCL)
         var renamed = false
@@ -113,19 +166,19 @@ public final class ReceiptStore {
         var written = 0
         while written < data.count {
             let count = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!.advanced(by: written), data.count - written) }
-            guard count > 0 else { throw HelperFailure("receipt_storage_failed", "Receipt write failed; printing is blocked.") }
+            guard count > 0 else { throw HelperFailure("receipt_storage_failed", "Private file write failed.") }
             written += count
         }
-        guard fsync(fd) == 0 else { throw HelperFailure("receipt_storage_failed", "Receipt sync failed; printing is blocked.") }
+        guard fsync(fd) == 0 else { throw HelperFailure("receipt_storage_failed", "Private file sync failed.") }
         // Atomically publish only complete admissions, without overwriting an existing ID.
-        let result = new ? renamex_np(path.path, target.path, UInt32(RENAME_EXCL)) : rename(path.path, target.path)
+        let result = exclusive ? renamex_np(path.path, target.path, UInt32(RENAME_EXCL)) : rename(path.path, target.path)
         if result != 0 {
-            throw HelperFailure("receipt_storage_failed", "Receipt replacement failed; printing is blocked.")
+            throw HelperFailure("receipt_storage_failed", "Private file replacement failed.")
         }
         renamed = true
         let directoryFD = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-        guard directoryFD >= 0 else { throw HelperFailure("receipt_storage_failed", "Cannot sync receipt directory.") }
+        guard directoryFD >= 0 else { throw HelperFailure("receipt_storage_failed", "Cannot open private directory for sync.") }
         defer { close(directoryFD) }
-        guard fsync(directoryFD) == 0 else { throw HelperFailure("receipt_storage_failed", "Directory sync failed; printing is blocked.") }
+        guard fsync(directoryFD) == 0 else { throw HelperFailure("receipt_storage_failed", "Private directory sync failed.") }
     }
 }

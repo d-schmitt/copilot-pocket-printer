@@ -13,6 +13,8 @@ public final class HelperService {
     public private(set) var safetyBlocked = false
     public private(set) var unresolved: [JobReceipt] = []
     public private(set) var restartRequired = false
+    public private(set) var confirmationMode = ConfirmationMode.native
+    public private(set) var confirmationPreferenceError: HelperFailure?
     private var storageBlocked = false
     private let store: ReceiptStore
     private let instance = UUID()
@@ -49,6 +51,26 @@ public final class HelperService {
         }
         safetyBlocked = !unresolved.isEmpty
         latest = unresolved.first
+        do { confirmationMode = try store.loadConfirmationMode() }
+        catch {
+            confirmationPreferenceError = error as? HelperFailure ??
+                HelperFailure("confirmation_preference_read_failed", "Cannot load confirmation preference. Using native confirmation.")
+        }
+    }
+
+    public func setConfirmationMode(_ mode: ConfirmationMode) {
+        guard !closed else { return }
+        do {
+            try store.saveConfirmationMode(mode)
+            confirmationMode = mode
+            confirmationPreferenceError = nil
+        } catch {
+            confirmationMode = .native
+            confirmationPreferenceError = error as? HelperFailure ??
+                HelperFailure("confirmation_preference_write_failed", "Cannot save confirmation preference. Using native confirmation.")
+        }
+        // A saved mode affects fresh admissions only, never a staged or executing job.
+        onChange?()
     }
 
     public func handle(_ data: Data) -> HelperReply {
@@ -62,8 +84,10 @@ public final class HelperService {
             case "helper_status":
                 result = HelperResult(health: HelperHealth(bluetooth: bluetooth(), active_job_id: active?.job_id,
                     safety_blocked: safetyBlocked, unresolved_job_ids: unresolved.map(\.job_id),
+                    confirmation_mode: confirmationMode, confirmation_preference_error: confirmationPreferenceError,
                     message: safetyBlocked ? "Printing blocked. Inspect unresolved receipts and paper; acknowledge only in the helper window after restart if required." :
-                        "No BLE access by this status call. Print needs per-job approval in the helper window."))
+                        (confirmationMode == .native ? "No BLE access by this status call. Fresh jobs need AI-client approval and a native-window confirmation." :
+                            "No BLE access by this status call. Fresh approved jobs may print immediately. Any same-user program can claim approval; the helper cannot verify a human click.")))
             case "inspect_png":
                 let (preview, image, _) = try inspect(request.png_base64)
                 result = HelperResult(image: image, preview_png_base64: preview.base64EncodedString())
@@ -120,7 +144,7 @@ public final class HelperService {
 
     private func admit(_ request: HelperRequest) throws -> JobReceipt {
         guard request.paper_approved == true else {
-            throw HelperFailure("paper_approval_required", "Obtain explicit approval for this one job before setting paper_approved. Native per-job approval is also required.")
+            throw HelperFailure("paper_approval_required", "Obtain explicit approval in the AI client for this one job before setting paper_approved. Native confirmation is also required unless the helper has opted into AI-client confirmations.")
         }
         guard let id = request.job_id, let device = request.device_id else {
             throw HelperFailure("invalid_request", "Stable job_id and explicit device_id UUIDs are required.")
@@ -138,10 +162,12 @@ public final class HelperService {
             throw HelperFailure("bluetooth_\(bluetooth())", "Bluetooth is not ready. Use the helper's explicit permission button and observe macOS; nothing was admitted.")
         }
         let now = Date()
+        let mode = confirmationMode
         let receipt = JobReceipt(job_id: id, device_id: device, image_sha256: image.sha256, height: image.height,
             instance_id: instance, state: "awaiting_approval",
-            message: "Durably admitted, not sent. Review and approve exactly this job in the helper window within five minutes.",
-            created_at: now, updated_at: now)
+            message: mode == .native ? "Durably admitted, not sent. Review and approve exactly this job in the helper window within five minutes." :
+                "Durably admitted with client-asserted approval. Preparing immediate submission under the saved opt-in.",
+            created_at: now, updated_at: now, confirmation_mode: mode)
         // The write-ahead receipt survives process loss. Image bytes are memory-only.
         try store.save(receipt, new: true)
         active = receipt; latest = receipt; job = prepared; preview = data
@@ -150,8 +176,15 @@ public final class HelperService {
             guard let self, self.active?.job_id == id, self.active?.state == "awaiting_approval" else { return }
             self.cancelActive(reason: "Approval expired. No bytes submitted.")
         }
-        onChange?()
-        return receipt
+        if mode == .aiClient {
+            approveActive(source: .aiClient)
+        } else {
+            onChange?()
+        }
+        guard let current = try self.receipt(id) else {
+            throw HelperFailure("receipt_storage_failed", "Admitted job receipt unavailable. Do not resubmit.")
+        }
+        return current
     }
 
     public func receipt(_ id: UUID) throws -> JobReceipt? {
@@ -161,10 +194,17 @@ public final class HelperService {
     }
 
     public func approveActive() {
+        approveActive(source: .native)
+    }
+
+    private func approveActive(source: ConfirmationMode) {
         guard !closed, !safetyBlocked, var receipt = active, receipt.state == "awaiting_approval", let job else { return }
         guard bluetooth() == "ready" else { cancelActive(reason: "Bluetooth is no longer ready. No print started."); return }
         expiry?.cancel(); expiry = nil
-        receipt.state = "in_progress"; receipt.message = "Native user approved this one job. Outcome is not yet known."; receipt.updated_at = Date()
+        receipt.state = "in_progress"
+        receipt.message = source == .native ? "Native user approved this one job. Outcome is not yet known." :
+            "Client asserted approval for this one job under the saved opt-in; no native click or human attestation. Outcome is not yet known."
+        receipt.updated_at = Date()
         guard persist(receipt) else { return }
         active = receipt; latest = receipt
         work = Task { [weak self, execute] in
