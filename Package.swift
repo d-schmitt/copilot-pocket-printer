@@ -11,7 +11,9 @@ let package = Package(
     products: [
         .executable(name: "printer-cli", targets: ["PrinterCLI"]),
         .executable(name: "printer-cli-checks", targets: ["PrinterCLIChecks"]),
-        .executable(name: "permission-probe", targets: ["PermissionProbe"])
+        .executable(name: "permission-probe", targets: ["PermissionProbe"]),
+        .executable(name: "printer-helper", targets: ["PrinterHelper"]),
+        .executable(name: "printer-helper-checks", targets: ["PrinterHelperChecks"])
     ],
     dependencies: [
         .package(
@@ -40,6 +42,10 @@ let package = Package(
             ]
         ),
         .target(name: "PermissionProbeCore"),
+        .target(name: "PrinterHelperKit", dependencies: ["PrinterCLIKit"]),
+        .executableTarget(name: "PrinterHelper", dependencies: ["PrinterHelperKit"]),
+        .executableTarget(name: "PrinterHelperChecks", dependencies: ["PrinterHelperKit"],
+                          path: "Tests/PrinterHelperChecks"),
         .target(name: "PermissionProbeUI", dependencies: ["PermissionProbeCore"]),
         .executableTarget(
             name: "PermissionProbe",
