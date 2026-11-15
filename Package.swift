@@ -10,7 +10,8 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "printer-cli", targets: ["PrinterCLI"]),
-        .executable(name: "printer-cli-checks", targets: ["PrinterCLIChecks"])
+        .executable(name: "printer-cli-checks", targets: ["PrinterCLIChecks"]),
+        .executable(name: "permission-probe", targets: ["PermissionProbe"])
     ],
     dependencies: [
         .package(
@@ -38,9 +39,15 @@ let package = Package(
                 ])
             ]
         ),
+        .target(name: "PermissionProbeCore"),
+        .target(name: "PermissionProbeUI", dependencies: ["PermissionProbeCore"]),
+        .executableTarget(
+            name: "PermissionProbe",
+            dependencies: ["PermissionProbeCore", "PermissionProbeUI"]
+        ),
         .target(
             name: "PrinterBehaviorChecks",
-            dependencies: ["PrinterCLIKit"],
+            dependencies: ["PrinterCLIKit", "PermissionProbeCore", "PermissionProbeUI"],
             path: "Tests/PrinterBehaviorChecks"
         ),
         .executableTarget(

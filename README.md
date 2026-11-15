@@ -12,8 +12,10 @@ testing only; it is not a substitute for that final in-app workflow.
 **Milestone 1's native Terminal physical-print checkpoint passed:** the user
 printed the test pattern once, and a photograph confirmed complete, readable
 output. **App-origin printing is not verified:** the observed Copilot app host
-still cannot initialize Bluetooth. The one-print approval is consumed; work
-stops here. There is no renderer for live data, MCP server, canvas, calendar
+still cannot initialize Bluetooth. The one-print approval is consumed. A
+separately approved **scan-only native permission probe** is now built locally,
+awaiting independent user launch and OS permission observation. It cannot print.
+There is no renderer for live data, MCP server, canvas, calendar
 integration, or automation yet.
 
 ## Build and offline checks
@@ -46,6 +48,9 @@ preflight and the explicit physical-operation gate. Inert transport checks cover
 notification readiness, synchronous Combine delivery, status-only command
 batches, unrelated battery drains, outstanding response callbacks, deadlines,
 cancellation and no replay. They do **not** prove radio delivery or paper output.
+The native probe checks additionally cover explicit user initiation, unlimited
+consent waiting, bounded controller/scan timers, typed failures, repeat/cancel/
+close behavior, stale callbacks and basic UI state without native Bluetooth.
 The repair fork separately checks its actual additive-credit state and adapter
 wiring without Bluetooth hardware.
 The Python smoke checks exercise executable exit codes and actual file IO,
@@ -55,7 +60,7 @@ standard library. Neither suite scans or connects to Bluetooth.
 On the development Mac, `swift build` succeeds but `swift test` cannot import
 `XCTest`: only Command Line Tools are installed, without XCTest or Swift Testing.
 The native SwiftPM test runner encounters the same missing module. No system
-installation was attempted. **24/24 shared Swift behavioral checks and 7/7
+installation was attempted. **36/36 shared Swift behavioral checks and 7/7
 Python process-level smoke checks pass.** `swift test` itself remains unavailable
 here, not passed; run its XCTest wrapper on a Mac with that runtime.
 
@@ -254,8 +259,79 @@ The one-operation approval is consumed. No further print, feed, retry, or later
 milestone is authorized by this result. App-origin printing remains unverified
 and blocked by the Copilot host's missing Bluetooth usage metadata. The
 application changes remain local; no application push or pull request was made.
-The required in-app print workflow remains unfinished. No helper, MCP server,
-canvas, or later-milestone work has been started by this verification.
+The required in-app print workflow remains unfinished. The permission probe
+below is a separately approved follow-up, not authority granted by this print.
+
+## Native permission feasibility probe
+
+This first gate tests whether a separately user-launched native app can receive
+**its own ordinary Bluetooth permission**. It does not repair or bypass the
+Copilot host. No connection, device query, feed, raster or print action exists in
+its entrypoint. Its target depends only on the discovery state machine and UI,
+not the printer library or CLI; the existing CLI host guard is unchanged.
+
+Build locally without launching:
+
+```sh
+python3 scripts/build_permission_probe.py
+```
+
+The fixed output is `.build/Pocket Printer Probe.app` in this checkout.
+The script refuses to rebuild while a `permission-probe` process is running,
+copies the release executable and real `Contents/Info.plist`, verifies that
+linked libraries are system-provided, and ad-hoc signs/verifies the bundle.
+It does not launch, register, install in `/Applications`, create a certificate,
+or change any system policy. This development build targets the local Mac's
+architecture; it is not a notarized distribution.
+
+The app is named **Pocket Printer Probe**, bundle ID
+`io.github.copilot-pocket-printer.permission-probe`. Its real bundle metadata
+contains `NSBluetoothAlwaysUsageDescription`. Build/signature inspection and a
+detached AppKit view render are offline checks, **not a successful launch or
+Bluetooth scan**. Ad-hoc signing does not establish stable TCC permission:
+the inspected signature has a CDHash-based designated requirement, and
+attribution and behavior after rebuilding remain unobserved.
+
+### User launch checkpoint
+
+1. In Finder, use **Go > Go to Folder** to open this checkout's `.build` folder,
+   then open **Pocket Printer Probe.app** yourself. Do not launch its executable
+   from Copilot, Terminal, MCP or an agent. Initially it must show an idle
+   window without requesting Bluetooth. Stop if macOS blocks launch; do not
+   bypass Gatekeeper or remove quarantine attributes.
+2. With the printer on and nearby, press **Scan nearby printers** once. Approve
+   ordinary Bluetooth access **only if the native prompt names Pocket Printer
+   Probe**. If it names Copilot or another application, stop and report the
+   exact message instead. No other privacy entitlement is needed.
+3. Report the actual prompt name (or no prompt), the matching entry observed
+   in **System Settings > Privacy & Security > Bluetooth**, the displayed
+   permission/state and any discovered name/UUID. Viewing the entry is enough;
+   do not reset TCC, change other apps' toggles or work around a denial.
+
+Permission-pending has no deadline and can be cancelled or closed. Once
+permission is known, controller startup is bounded to 10 seconds; a powered-on
+controller scans for 8 seconds, then stops and releases its manager. Only the
+exact name `Mini Pocket Printer_BLE` is retained, up to 32 devices. An
+advertisement is not model verification or paper readiness. Denied, restricted,
+Bluetooth-off, unsupported, startup timeout and no-advertisement timeout are
+different states. There is no automatic scan, polling, reconnect or retry.
+
+Stop after reporting this first observation. Before claiming stable permission,
+the experiment still needs observed repeat-scan/cancel/close behavior and one
+controlled rebuild/relaunch at this same path with signature evidence compared.
+A first prompt or first discovery does not pass that stability checkpoint.
+No paper action is authorized, including a helper-local print.
+
+Only after attribution/discovery is proven may a later gate add a BLE-free
+stdio MCP adapter talking to an independently running native helper. Spawning
+that helper as the MCP child could repeat the responsibility problem. Candidate
+local IPC is a short Unix-domain socket in a private directory with peer-user
+checks; same-user access is not isolation. Bounded PNG bytes revalidated by the
+helper, one in-flight job, job identity/deduplication, explicit helper-not-running
+errors, no arbitrary paths/shell execution and no replay after connection loss
+are later design constraints, not implemented features. The final workflow
+still needs a real Copilot tool call printing the existing PNG after **new**
+specific paper approval.
 
 ### Reviewed repair dependency
 
@@ -308,13 +384,15 @@ The planned boundary is:
 
 ```text
 Any client -> JSON-to-PNG templates -> PNG -> native printer-cli -> upstream BLE
-Any AI client -> local/stdio MCP render_card, preview_card, print_card
+Any AI client -> local/stdio MCP render_card, preview_card, print_card (planned)
+BLE-free MCP adapter -> independently running native helper (proposed)
 Copilot app (optional) -> Project, canvas preview, local recurring automation
 ```
 
-Only the PNG/CLI foundation and native adapter exist today. Later templates
+Only the PNG/CLI foundation, native CLI adapter and scan-only permission probe
+exist today. Later templates
 will let people choose their own layouts and content. Local MCP tools should
-reuse the same renderer and CLI, without making Copilot, WorkIQ, or a particular
+reuse the same renderer and native core, without making Copilot, WorkIQ, or a particular
 daily-card schema prerequisites. BLE stays in native Swift/CoreBluetooth, not
 Web Bluetooth inside a canvas.
 
@@ -325,7 +403,8 @@ is no calendar access or privacy-boundary implementation to claim here.
 
 | Milestone | Status / checkpoint |
 |---|---|
-| 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Stop here; approval consumed. App-origin BLE remains blocked and unverified. |
+| 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. App-origin BLE remains blocked and unverified. |
+| Permission feasibility gate | Scan-only native app built locally; independent launch, OS attribution/discovery and permission stability remain unverified. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |

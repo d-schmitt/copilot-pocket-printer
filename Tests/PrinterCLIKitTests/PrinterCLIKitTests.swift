@@ -21,5 +21,17 @@ final class PrinterCLIKitTests: XCTestCase {
                 XCTFail("\(check.name): \(error)")
             }
         }
+
+    }
+
+    @MainActor
+    func testProbeChecks() {
+        for check in ProbeChecks().cases {
+            do {
+                try check.run()
+            } catch {
+                XCTFail("\(check.name): \(error)")
+            }
+        }
     }
 }
