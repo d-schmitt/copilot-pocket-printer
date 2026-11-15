@@ -2,7 +2,7 @@
   "mcpServers": {
     "pocket-printer": {
       "command": "/ABSOLUTE/PATH/TO/node",
-      "args": ["/ABSOLUTE/PATH/TO/copilot-pocket-printer/bridge/server.mjs"]
+      "args": ["/Users/YOUR-USER/Applications/Copilot Pocket Printer/bridge/server.mjs"]
     }
   }
 }
