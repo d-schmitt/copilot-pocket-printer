@@ -18,7 +18,7 @@ public final class ProbeView: NSView {
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         let heading = NSTextField(labelWithString: "Pocket Printer Probe")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
-        let scope = NSTextField(wrappingLabelWithString: "Permission feasibility gate. Discovery only: no connection, query, feed or print.")
+        let scope = NSTextField(wrappingLabelWithString: "Permission feasibility gate (build 2). Discovery only: no connection, query, feed or print.")
         scope.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: 15, weight: .semibold)
         detail.font = .systemFont(ofSize: 13)

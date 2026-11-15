@@ -13,8 +13,9 @@ testing only; it is not a substitute for that final in-app workflow.
 printed the test pattern once, and a photograph confirmed complete, readable
 output. **App-origin printing is not verified:** the observed Copilot app host
 still cannot initialize Bluetooth. The one-print approval is consumed. A
-separately approved **scan-only native permission probe** is now built locally,
-awaiting independent user launch and OS permission observation. It cannot print.
+separately approved **scan-only native permission probe** discovered the printer
+from Finder, with its own enabled Bluetooth settings entry. A changed build now
+awaits user relaunch to test permission retention. It cannot print.
 There is no renderer for live data, MCP server, canvas, calendar
 integration, or automation yet.
 
@@ -290,7 +291,33 @@ contains `NSBluetoothAlwaysUsageDescription`. Build/signature inspection and a
 detached AppKit view render are offline checks, **not a successful launch or
 Bluetooth scan**. Ad-hoc signing does not establish stable TCC permission:
 the inspected signature has a CDHash-based designated requirement, and
-attribution and behavior after rebuilding remain unobserved.
+the original prompt name was not recalled, and behavior after rebuilding
+remains unobserved.
+
+### Observed probe checkpoint
+
+On 2026-11-15, the user independently opened the probe in Finder and discovered
+`Mini Pocket Printer_BLE` at -52 dBm. They confirmed **Pocket Printer Probe**
+was listed and enabled under **System Settings > Privacy & Security >
+Bluetooth**, without changing switches. The original prompt name remains
+unknown. The user then confirmed a second successful scan and normal quit;
+the agent verified that the probe process was no longer running.
+
+For one controlled update, the only runtime source change was adding
+**(build 2)** to the diagnostic scope label. The original signed app and its
+identity evidence were preserved locally before rebuilding at the same path.
+The entire `Info.plist`, bundle ID/name and ad-hoc signing method stayed
+identical. Both the executable hash and program-section hash changed, excluding
+the code signature and Mach-O load commands from the latter comparison: this
+was not a no-op re-sign. The CDHash-based designated requirement changed from
+`56ed4cd906f253fdb2320fdb4171cfc7d6eaa6c3` to
+`e747d4bb1841ff21a2abb0e477c025aa00b87a4f`.
+
+The changed app has not been launched by the agent. Its user relaunch, retained
+permission or re-prompt, and subsequent discovery remain unobserved. A new
+prompt followed by successful discovery would demonstrate reauthorization,
+not permission retained across the update. No MCP/IPC or paper action is
+authorized by this experiment.
 
 ### User launch checkpoint
 
@@ -404,7 +431,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 | Milestone | Status / checkpoint |
 |---|---|
 | 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. App-origin BLE remains blocked and unverified. |
-| Permission feasibility gate | Scan-only native app built locally; independent launch, OS attribution/discovery and permission stability remain unverified. |
+| Permission feasibility gate | Finder discovery, enabled probe OS grant, repeat scan and normal quit observed. Changed build awaiting user relaunch; permission retention still unverified. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |
