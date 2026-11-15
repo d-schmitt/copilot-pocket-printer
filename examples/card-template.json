@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "blocks": [
+    {"kind": "text", "style": "title", "text": "POCKET CARD"},
+    {"kind": "text", "style": "body", "text": "Synthetic JSON rendering example"},
+    {"kind": "rule"},
+    {"kind": "text", "style": "body", "text": "F\u00fc\u00dfe, Gr\u00f6\u00dfe, \u00c4rger"},
+    {"kind": "text", "style": "heading", "text": "MAKE IT YOUR GARDEN"},
+    {"kind": "art", "name": "garden"}
+  ]
+}

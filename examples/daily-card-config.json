@@ -1,0 +1,10 @@
+{
+  "location": "Friedrichshafen",
+  "latitude": 47.65,
+  "longitude": 9.48,
+  "timezone": "Europe/Berlin",
+  "work_start": "08:00",
+  "work_end": "17:00",
+  "lunch_start": "12:00",
+  "lunch_end": "13:00"
+}

@@ -2,7 +2,7 @@
 
 A portable macOS foundation for printing your own bitmap cards on the Tronic
 5890 thermal pocket printer without its vendor app. GitHub Copilot, Claude Code,
-another AI client, or a person can use the same CLI. A daily card is one future
+another AI client, or a person can use the same CLI. The daily card is a reusable
 example, not a hard-coded product or a requirement to use Copilot or WorkIQ.
 
 **Printing from the Copilot app with one per-print confirmation and no helper
@@ -22,10 +22,30 @@ same-user program claiming approval, not an attested human click.
 Development rebuilds may request
 permission again, as observed with the scan-only probe. All three test-print
 approvals are consumed; this result authorizes no further printing or features.
-There is no renderer for live data, canvas, calendar integration or automation.
+The separate offline renderer now accepts JSON templates. The daily-card
+example assembles weather and times-only calendar data without printer access.
+There is no canvas or automation.
 
 See [native helper and MCP setup](bridge/README.md) for the verified path and
 its setup/approval requirements.
+
+## What this showcases
+
+**Implemented:** portable bitmap CLI; user-authorized native helper; BLE-free
+MCP print bridge; JSON-to-PNG rendering; configurable daily-card example with
+Open-Meteo sun/weather, calendar-time projection, remaining-day walk selection,
+original joke, uniquely solvable Sudoku or line-art bottoms; offline PR CI
+workflow (hosted execution not yet observed).
+Any capable assistant can invoke the renderer CLI directly. WorkIQ is one
+optional calendar source, not a renderer dependency.
+
+**Planned:** interactive canvas, automatic calendar acquisition/scheduling, and
+an optional client skill. These are not enabled by the renderer.
+The original test-pattern printing checkpoint does not verify daily-card paper
+output or authorize a new print.
+
+See [daily-card interfaces and policies](docs/daily-card.md) for usage, privacy,
+deterministic input, source failures and offline tests.
 
 ## Build and offline checks
 
@@ -44,6 +64,8 @@ BIN="$BIN_DIR/printer-cli"
 "$BIN" print examples/test-pattern.png --dry-run
 "$BIN" feed 80 --dry-run
 python3 scripts/smoke_test.py "$BIN"
+"$BIN_DIR/card-renderer-checks"
+CARD_RENDERER_BIN="$BIN_DIR/card-renderer" python3 -m unittest discover -s Tests/DailyCardTests -v
 ```
 
 `--show-bin-path` avoids assuming a particular SwiftPM build-system directory.
@@ -73,6 +95,43 @@ installation was attempted. **36/36 shared Swift behavioral checks and 7/7
 Python process-level smoke checks pass.** `swift test` itself remains unavailable
 here, not passed; run its XCTest wrapper on a Mac with that runtime.
 
+### Pull request CI
+
+[PR CI](.github/workflows/ci.yml) runs on `pull_request` and pushes to `main`,
+with one stable check named **`Offline checks`**. After a successful
+GitHub-hosted run, that is the exact check name that can be made required in
+repository rules. This change does not modify rulesets or branch protection.
+
+The job uses supported `macos-15`, full Xcode 16.4, Node 24 and Python 3.13.
+External actions are pinned to verified release commits. It has read-only
+contents permission, no retained checkout credentials, no secrets, no
+`pull_request_target`, no deployment or artifact upload, a 20-minute timeout
+and cancellation of superseded runs. Dependency downloads may occur during
+build/runtime setup, but tests make no live calendar/weather/Bluetooth calls.
+Helper tests use isolated temporary stores and inert executors, never the
+running user's helper or preferences.
+
+Run exactly the shared workflow checks on a full-Xcode Mac:
+
+```sh
+bash scripts/checks.sh
+```
+
+This builds and runs the Swift behavior/helper/card checks, Python CLI/card
+integration tests, Node stdio/Unix-IPC suite, and **`swift test`**, including the
+shared card XCTest wrapper. For a Command Line Tools-only local machine,
+`bash scripts/checks.sh --without-xctest` runs every feasible suite and explicitly
+reports XCTest as **not run**. It is not a passing complete CI result.
+No npm/Python package installation or extra lint framework is needed.
+
+Runner inventory and action releases were checked on 2026-11-15:
+[macOS 15 inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md),
+[checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
+[setup-node v7.1.0](https://github.com/actions/setup-node/releases/tag/v7.1.0),
+[setup-python v7.1.0](https://github.com/actions/setup-python/releases/tag/v7.1.0).
+Local validation is not a GitHub-hosted run. Publishing a branch/PR and running
+hosted CI still requires separate authorization; nothing was pushed here.
+
 ## CLI
 
 | Command | Current behavior |
@@ -83,6 +142,7 @@ here, not passed; run its XCTest wrapper on a Mac with that runtime.
 | `status [--device <uuid>] [--timeout <seconds>]` | Metadata preflight, then bounded advertisement scan. Never connects or sends commands. |
 | `status --device <uuid> --connect` | Connect, confirm FF00/FF02 plus both FF01/FF03 notifications, send activated status queries, collect replies, and disconnect. No raster, feed or settings requested. |
 | `test-pattern <new.png>` | Generates a local 384x288 PNG; refuses to overwrite an existing file. |
+| `card-renderer <template.json\|-> <new.png>` (separate executable) | Renders bounded JSON blocks to a 384-dot PNG and emits a JSON layout report, without the helper or Bluetooth. |
 
 Use `--help` for accepted options. `status` waits the full scan window (default
 8 seconds, range 1...30, plus at most 5 seconds for Bluetooth startup) so a
