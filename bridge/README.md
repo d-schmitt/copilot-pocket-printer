@@ -6,6 +6,19 @@ launches a native process, and talks to an independently user-launched
 repository. `examples/mcp-client.example.json` is a generic client example,
 not an automatically loaded Copilot app customization.
 
+**Real Copilot printing passed on 2026-11-15.** After explicit setup approval,
+the user manually registered `pocket-printer`, authorized the helper's own native
+Bluetooth prompt and completed one separately approved test-pattern print.
+Registered status/preview/submission calls and the user's expected-output
+confirmation are recorded in the [verification result](../README.md#copilot-in-app-verification-result).
+The transport receipt still says `submitted_only`, `paper_confirmed: false`;
+user confirmation is separate evidence, not a receipt rewrite.
+
+**Keep the helper open and approve each job in its native window.** Closing it
+produces `helper_not_running`; the bridge does not relaunch it. Development
+rebuilds may require fresh permission. The successful test approval is consumed,
+and the setup procedure below does not authorize another paper operation.
+
 The server implements the narrow JSON-RPC/MCP stdio subset it advertises:
 initialization/version negotiation, `notifications/initialized`, `ping`,
 `tools/list`, `tools/call` and cancellation notifications. It negotiates
@@ -150,4 +163,6 @@ dependency-free Swift harness exits nonzero on failed assertions.
 The Node harness exercises actual child-process stdio initialization/list/call,
 real macOS sockets/peer checks and durable receipts across inert helper
 process restarts. Its executor is explicitly fake and cannot access Bluetooth.
-It is not a registered Copilot integration or real printing.
+Those harness runs are not registered Copilot calls or real printing. The
+separate live checkpoint above supplies that evidence for the one approved
+test pattern, not every image, client, device or failure condition.

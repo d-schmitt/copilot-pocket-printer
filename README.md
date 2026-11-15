@@ -5,22 +5,23 @@ A portable macOS foundation for printing your own bitmap cards on the Tronic
 another AI client, or a person can use the same CLI. A daily card is one future
 example, not a hard-coded product or a requirement to use Copilot or WorkIQ.
 
-The end-to-end goal remains **printing from the Copilot app without copying
-commands into Terminal**. Terminal is acceptable for milestone 1 hardware
-testing only; it is not a substitute for that final in-app workflow.
+**Printing from the Copilot app without per-print Terminal commands is now
+verified for the test pattern.** The user manually registered the BLE-free MCP
+bridge, authorized the independently launched native helper, approved one new
+print in Copilot and clicked its native approval button, then confirmed that
+the paper output looked exactly as expected.
 
-**Milestone 1's native Terminal physical-print checkpoint passed:** the user
-printed the test pattern once, and a photograph confirmed complete, readable
-output. **App-origin printing is not verified:** the observed Copilot app host
-still cannot initialize Bluetooth. The one-print approval is consumed. A
-separately approved **scan-only native permission probe** discovered the printer
-from Finder and again after a changed build requested fresh permission.
-That was **reauthorization**, not retained permission. A print-capable native
-helper and BLE-free stdio MCP bridge are now implemented locally, pending their
-own launch, client-registration and newly approved paper checkpoints.
+The earlier native Terminal/photo checkpoint also passed. Direct Bluetooth
+initialization in the Copilot host remains blocked by its missing usage
+metadata; the verified workflow keeps BLE in the separately authorized helper,
+without modifying Copilot or bypassing TCC. **The helper must remain open and
+each job still needs native-window approval.** Development rebuilds may request
+permission again, as observed with the scan-only probe. Both test-print
+approvals are consumed; this result authorizes no further printing or features.
 There is no renderer for live data, canvas, calendar integration or automation.
 
-See [native helper and MCP setup](bridge/README.md) for the current gated path.
+See [native helper and MCP setup](bridge/README.md) for the verified path and
+its setup/approval requirements.
 
 ## Build and offline checks
 
@@ -259,12 +260,47 @@ approximately 46 mm total are the commanded/nominal values, not measured
 results. The native Terminal checkpoint passes on the combined evidence,
 especially the photograph, not merely on queue submission.
 
-The one-operation approval is consumed. No further print, feed, retry, or later
-milestone is authorized by this result. App-origin printing remains unverified
-and blocked by the Copilot host's missing Bluetooth usage metadata. The
-application changes remain local; no application push or pull request was made.
-The required in-app print workflow remains unfinished. The permission probe
-below is a separately approved follow-up, not authority granted by this print.
+That one-operation approval is consumed. It did not authorize the subsequent
+probe/helper work or another print; those received separate approval. Direct
+Copilot-host BLE remains blocked. The later helper-mediated Copilot checkpoint
+below passed without changing that host. Application changes remain local;
+no application push or pull request was made.
+
+### Copilot in-app verification result
+
+On **2026-11-15**, the coordinating Project reported real registered Copilot
+MCP calls against local implementation commit `186ebe4`, followed by the user's
+explicit physical-output confirmation. This was not the offline harness or a
+Terminal-per-print command.
+
+| Evidence | Observation | Proves |
+|---|---|---|
+| Native permission and setup | Project verified the helper's own prompt in a user screenshot; the user authorized it and manually registered `pocket-printer` in Copilot after setup approval | Separate native permission owner and real client registration |
+| Real status and preview | Helper `ready`, no safety block/unresolved jobs; `inspect_png` returned the matching 384x288 preview, 12 bands and 80 clearance dots | Registered tool path and validated bitmap, not paper output |
+| One stable job receipt | `F83F8085-429F-478D-9CAC-1D2447725FF1` stayed `awaiting_approval` until the user clicked the native button, then became `submitted_only`: 13,943 bytes, 2-second observation, disconnected | Native approval gate and local transport submission, without a replacement job or retry |
+| User's direct confirmation, relayed by the Project | "the print was succesful and looks exactly like expected" | User-confirmed successful physical output and expected appearance |
+
+To reduce tool-payload size, the Project losslessly encoded the original
+binary-gray test pattern as a 1-bit PNG using existing Pillow and asserted
+full pixel equality. That derived input was 1,796 bytes, SHA-256
+`943e8f413c68b99a051cd9e57cb565737a7ac3c3e2dfc906602cd8c5b45cd1f6`.
+It changed encoding, not the layout or printed pixels.
+
+An initial `helper_not_running` was resolved by the user reopening the helper.
+An initially malformed inspection payload was correctly rejected as
+`invalid_image`; the Project identified its input error, not a code defect.
+No paper before the native click was expected: the receipt was still awaiting
+approval. The final reported helper status was `ready`, `safety_blocked: false`,
+with no unresolved jobs.
+
+The receipt remains **`paper_confirmed: false`** and was not edited to manufacture
+success. Physical success comes from the user's report, not a firmware
+acknowledgment or a new photograph inspected by this implementation session.
+Exact dimensions/feed length were not measured; approximately 46 mm is nominal.
+Keep the helper open; each future job needs its own approval, including the
+native-window click. Ad-hoc rebuild permission persistence remains unproven.
+The new single-print approval is consumed. Work stops here without further
+paper actions, later milestones, publication or merge.
 
 ## Native permission feasibility probe
 
@@ -293,9 +329,9 @@ The app is named **Pocket Printer Probe**, bundle ID
 contains `NSBluetoothAlwaysUsageDescription`. Build/signature inspection and a
 detached AppKit view render are offline checks, **not a successful launch or
 Bluetooth scan**. Ad-hoc signing does not establish stable TCC permission:
-the inspected signature has a CDHash-based designated requirement, and
-the original prompt name was not recalled, and behavior after rebuilding
-remains unobserved.
+the inspected signature has a CDHash-based designated requirement. The original
+prompt name was not recalled; the controlled rebuild later required
+reauthorization, as recorded below.
 
 ### Observed probe checkpoint
 
@@ -326,7 +362,10 @@ The agent did not launch either probe build. The subsequent print-capable
 helper/MCP implementation is a separately approved step, not authority inferred
 from this probe result.
 
-### User launch checkpoint
+### Probe launch procedure for a separately approved setup
+
+The original probe checkpoint is complete. This procedure is not a request to
+repeat a scan or rebuild the running print-capable helper.
 
 1. In Finder, use **Go > Go to Folder** to open this checkout's `.build` folder,
    then open **Pocket Printer Probe.app** yourself. Do not launch its executable
@@ -350,19 +389,19 @@ advertisement is not model verification or paper readiness. Denied, restricted,
 Bluetooth-off, unsupported, startup timeout and no-advertisement timeout are
 different states. There is no automatic scan, polling, reconnect or retry.
 
-Stop after reporting this first observation. Before claiming stable permission,
-the experiment still needs observed repeat-scan/cancel/close behavior and one
-controlled rebuild/relaunch at this same path with signature evidence compared.
-A first prompt or first discovery does not pass that stability checkpoint.
-No paper action is authorized, including a helper-local print.
+For any new setup, a first prompt or discovery does not establish permission
+stability. The completed experiment observed repeat scan/quit and a controlled
+changed rebuild, which required reauthorization. Cancel-button behavior and
+long-term permission stability are not established by that evidence.
+No paper action is authorized by this scan-only procedure.
 
 The separately approved [helper/MCP gate](bridge/README.md) now implements that
 independent-process boundary, private peer-checked Unix IPC, revalidated PNG
 bytes, one admitted job, durable non-replay receipts and native per-job approval.
 It never spawns the helper as the MCP child. Same-user IPC is not isolation.
-The print-capable helper has not yet been independently launched or registered
-with Copilot. The final workflow still needs a real Copilot tool call printing
-the existing PNG after **new** specific paper approval and visual confirmation.
+The print-capable helper was independently launched and authorized, and the
+bridge was manually registered with Copilot. The separately approved real
+Copilot print and user confirmation passed as recorded above.
 
 ### Reviewed repair dependency
 
@@ -416,12 +455,13 @@ The planned boundary is:
 ```text
 Any client -> JSON-to-PNG templates -> PNG -> native printer-cli -> upstream BLE
 Any AI client -> local/stdio MCP render_card, preview_card, print_card (planned)
-BLE-free MCP adapter -> independently running native helper (implemented; live gates pending)
+BLE-free MCP adapter -> independently running native helper (Copilot test-pattern print verified)
 Copilot app (optional) -> Project, canvas preview, local recurring automation
 ```
 
 The PNG/CLI foundation, native adapters, scan-only probe and helper/MCP bridge
-exist today. Only the Terminal hardware path is physically verified. Later templates
+exist today. Both the Terminal path and one real Copilot/helper test-pattern
+print are physically verified, with the distinct evidence recorded above. Later templates
 will let people choose their own layouts and content. Local MCP tools should
 reuse the same renderer and native core, without making Copilot, WorkIQ, or a particular
 daily-card schema prerequisites. BLE stays in native Swift/CoreBluetooth, not
@@ -434,9 +474,9 @@ is no calendar access or privacy-boundary implementation to claim here.
 
 | Milestone | Status / checkpoint |
 |---|---|
-| 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. App-origin BLE remains blocked and unverified. |
+| 1. CLI test pattern on real hardware | Native Terminal checkpoint passed with connected replies and photo-confirmed paper output. Approval consumed. Direct Copilot-host BLE remains blocked. |
 | Permission feasibility gate | Finder discovery and repeat/quit observed. Changed build requested fresh permission, then discovered; reauthorization works, update permission retention failed. |
-| Native helper and MCP gate | Implemented locally; native launch/permission, real client registration and a new in-app paper test remain gated. |
+| Native helper and MCP gate | Passed: own native permission, real Copilot status/preview/submission, native job approval and user-confirmed paper output. Helper stays open; per-job native approval required. Test approval consumed. |
 | 2. Real-data card PNG and templates | Planned; includes provider validation and privacy tests. |
 | 3. Canvas preview and explicit print | Planned; native BLE behind reusable tools. |
 | 4. Daily local automation | Planned; weekday 07:00 requires an awake Mac and nearby powered-on printer. No automation created. |
@@ -447,7 +487,7 @@ is no calendar access or privacy-boundary implementation to claim here.
 |---|---|---|
 | Coordinate milestones and keep reference context | Project | Used to coordinate this work |
 | Implement and verify an isolated change | Session | Used for this local CLI foundation |
-| Reusable preview/print operations | MCP tools | Local bridge implemented; live client verification pending. Rendering remains planned. |
+| Reusable preview/print operations | MCP tools | Real Copilot preview and one helper-mediated print verified with user-confirmed output. Rendering remains planned. |
 | Optional calendar context under a strict times-only boundary | WorkIQ | Planned; not required by shared code |
 | Preview, content toggles and explicit print | Canvas | Planned; no in-canvas Web Bluetooth |
 | Recurring local card delivery | Local automation | Planned; awake Mac and nearby printer required |
