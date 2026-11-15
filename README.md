@@ -35,7 +35,7 @@ its setup/approval requirements.
 MCP print bridge; JSON-to-PNG rendering; configurable daily-card example with
 Open-Meteo sun/weather, calendar-time projection, remaining-day walk selection,
 original joke, uniquely solvable Sudoku or line-art bottoms; offline PR CI
-workflow (hosted execution not yet observed).
+workflow (see the PR's hosted check result).
 Any capable assistant can invoke the renderer CLI directly. WorkIQ is one
 optional calendar source, not a renderer dependency.
 
@@ -46,6 +46,25 @@ output or authorize a new print.
 
 See [daily-card interfaces and policies](docs/daily-card.md) for usage, privacy,
 deterministic input, source failures and offline tests.
+
+## Stable installation from main
+
+The helper and bridge source are on `main`; `.build` apps are generated,
+untracked artifacts. Normal setup uses **one per-user installation**, not a
+running app or MCP server inside a branch/worktree. From a reviewed, up-to-date
+checkout of `main`, `python3 scripts/install_printer.py` builds and verifies a
+standalone package under `.build/installation` only. It does not install,
+launch anything, change MCP configuration or access Bluetooth.
+
+After explicit installation approval, `--install` copies both runtimes into
+`~/Applications/Copilot Pocket Printer/`: `Pocket Printer Helper.app` and
+`bridge/server.mjs` with its local module. That directory is independent of the
+source checkout. The script prints exact proposed client configuration without
+applying it. Node 22+ must remain installed separately. See the
+[installation and update procedure](bridge/README.md#setup-with-explicit-approval-gates)
+for the separate Finder launch, permission and client-registration checkpoints.
+Stable paths remove the worktree dependency; they do not guarantee client tool
+discovery, retained Bluetooth permission or automatic helper startup.
 
 ## Build and offline checks
 
@@ -64,6 +83,7 @@ BIN="$BIN_DIR/printer-cli"
 "$BIN" print examples/test-pattern.png --dry-run
 "$BIN" feed 80 --dry-run
 python3 scripts/smoke_test.py "$BIN"
+python3 scripts/test_install_printer.py
 "$BIN_DIR/card-renderer-checks"
 CARD_RENDERER_BIN="$BIN_DIR/card-renderer" python3 -m unittest discover -s Tests/DailyCardTests -v
 ```
@@ -118,11 +138,14 @@ bash scripts/checks.sh
 ```
 
 This builds and runs the Swift behavior/helper/card checks, Python CLI/card
-integration tests, Node stdio/Unix-IPC suite, and **`swift test`**, including the
+integration and installer safety tests, Node stdio/Unix-IPC suite, and **`swift test`**, including the
 shared card XCTest wrapper. For a Command Line Tools-only local machine,
 `bash scripts/checks.sh --without-xctest` runs every feasible suite and explicitly
 reports XCTest as **not run**. It is not a passing complete CI result.
 No npm/Python package installation or extra lint framework is needed.
+Installer tests use owned temporary fixtures to exercise standalone bridge
+discovery, atomic replacement and failure preservation; they never install or
+launch the real helper.
 
 The multi-file `PermissionProbe` and `PrinterHelper` targets keep their `@main`
 types in named application files, not the special `main.swift` filename.

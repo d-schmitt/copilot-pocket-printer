@@ -100,30 +100,76 @@ The default native mode's pending approval expires after five minutes.
 
 ## Setup, with explicit approval gates
 
-Build from the repository root:
+Use one installation sourced from a reviewed, up-to-date `main` checkout.
+Do not register a per-branch `bridge/server.mjs` or keep a development `.build`
+app as the normal runtime. Source is tracked on main; app bundles are not.
+Requirements are macOS 13+, Swift 5.9+, Python 3 and an installed Node 22+.
+From the repository root, prepare without activating:
 
 ```sh
-swift build
-python3 scripts/build_printer_helper.py
+python3 scripts/install_printer.py
 ```
 
-If the existing helper must remain running, use
-`python3 scripts/build_printer_helper.py --stage` instead. This packages
-`.build/staged/Pocket Printer Helper.app` without changing
-`.build/Pocket Printer Helper.app`. Do not launch the staged copy or replace
-the active bundle until the user quits the old helper and approves the switch.
-The development checkpoint recorded above completed that approved switch
-without rebuilding, preserved version 1, and passed the later user-only setup
-and separately approved physical test.
+This reuses `build_printer_helper.py --stage`, then copies and checks a complete
+package under `.build/installation/Copilot Pocket Printer/`. An absolute
+`--stage-root` selects another staging parent. `--helper-app` accepts an existing
+signed bundle with this checkout's bridge; `--from-stage` copies both runtimes
+from a verified staged package. Both avoid rebuilding. `--node` selects an
+absolute Node executable.
+Neither default staging nor the builder installs or launches an app. A running
+helper in another location is left alone; a running staging target is refused.
 
-The app is `.build/Pocket Printer Helper.app`. It is separate from the original
-scan-only **Pocket Printer Probe.app**, with a new bundle ID and a truthful
-print-capable Bluetooth description. It is ad-hoc signed for development,
-not installed or notarized. The probe already demonstrated that a changed
-ad-hoc build can request permission again; do not promise update stability.
+**Only after explicit installation approval**, quit the old helper yourself and
+disconnect clients using the installation being updated. Do not launch it or
+reconnect clients while installation is in progress. Install the staged package
+without rebuilding:
 
-The user must close the old probe, independently open the helper in Finder,
-and press **Enable Bluetooth**. Approve an ordinary Bluetooth request only if
+```sh
+python3 scripts/install_printer.py --install \
+  --from-stage "$PWD/.build/installation/Copilot Pocket Printer"
+```
+
+The stable paths are:
+
+| Component | Per-user destination |
+|---|---|
+| Native app | `~/Applications/Copilot Pocket Printer/Pocket Printer Helper.app` |
+| MCP entry point | `~/Applications/Copilot Pocket Printer/bridge/server.mjs` |
+| Local bridge module | `~/Applications/Copilot Pocket Printer/bridge/ipc.mjs` |
+
+Both runtimes deliberately share **one managed directory**, allowing an atomic
+whole-package update instead of a partly updated app/bridge pair. They are real
+copies, not symlinks. The bridge needs only its two runtime modules and Node
+built-ins, not npm packages, source files, a particular cwd or a Copilot-specific
+folder. Do not store personal files inside this directory. Its private manifest
+contains only relative file names, modes and content hashes, not source paths,
+credentials or user data. Preferences and uncertain receipts remain untouched in
+the established **separate** `~/Library/Application Support/CopilotPocketPrinter`.
+
+For an update, repeat preparation from the reviewed main source and explicitly
+install again. Identical content is a no-op. Only an unmodified, recognized
+installation can be replaced. Symlinks, unrelated files, invalid signatures,
+non-system dynamic libraries and running target helper/bridge processes cause
+refusal; no process is stopped. Both copies must pass validation before a macOS
+atomic directory swap. Preparation or swap failure leaves the previous package
+unchanged. The replaced, verified package is then removed from the invocation's
+private temporary directory. There is no retained rollback archive, updater,
+login item, uninstall command or automatic client reconfiguration. Process checks
+are snapshots, not a lock against a user launching the app during installation.
+This guards ordinary setup mistakes, not malicious same-user filesystem changes.
+Owned regular `.DS_Store` Finder metadata is ignored and discarded on replacement;
+other added or changed paths are named in the refusal. Source and installed files
+must be user-owned and not group/world writable. Staging cannot be placed inside
+the stable installation. A cleanup error explicitly reports whether publication
+already happened; it is not a rollback.
+
+The helper keeps bundle ID `io.github.copilot-pocket-printer.helper` and its
+truthful print-capable Bluetooth description. It remains ad-hoc signed, not
+notarized. Moving or rebuilding it may request normal permission again.
+
+After a separate activation approval, the user must independently open the
+**installed** helper in Finder and press **Enable Bluetooth**.
+Approve an ordinary Bluetooth request only if
 it names **Pocket Printer Helper**. Pending consent has no deadline; authorized
 controller startup has a 10-second deadline. If another app is named, or access
 is denied/restricted, stop. Do not reset TCC, alter host metadata, install
@@ -131,9 +177,30 @@ certificates or bypass Gatekeeper. The existing Copilot-host metadata guard is
 also checked before the helper requests Bluetooth and by each native job.
 
 Only after that checkpoint, obtain approval to register this **stdio** server
-in the desired AI client. Use an absolute Node executable path and an absolute
-`bridge/server.mjs` argument; no shell wrapper and no native helper command.
-The example configuration does not grant authority to install or enable it.
+in the desired AI client. The installer prints exact proposed configuration
+using the stable server path and absolute Node executable; it never applies it.
+Use those values, with no shell wrapper or native helper command. No tilde
+expansion is needed in client configuration. Keep that Node installation
+available independently of this repository. The example configuration does not
+grant authority to install or enable it.
+
+**Copilot's separate settings fields are not a shell command.** Copy the
+installer's `Command` value into **Command**, and its complete one-item JSON
+array into **Arguments**, including the square brackets and double quotes.
+For a user named `YOUR-USER`, the fields look like this:
+
+| Field | Literal field value |
+|---|---|
+| Command | `/usr/local/bin/node` |
+| Arguments | `["/Users/YOUR-USER/Applications/Copilot Pocket Printer/bridge/server.mjs"]` |
+
+Use the actual paths printed by the installer. Do not paste the bare
+space-containing server path into Arguments: the field splits bare text on
+spaces. Its hint permits a JSON array for arguments containing spaces or empty
+arguments. A split entry point can cause Node to exit with `MODULE_NOT_FOUND`
+before MCP initialization. The full `mcpServers` JSON remains the format for
+configuration files; it does not belong in the separate Arguments field.
+
 The bridge defaults to `/tmp/cpp-<uid>/helper.sock`; an explicitly configured
 `POCKET_PRINTER_SOCKET` environment variable can select another private socket
 for tests. There is no network listener or automatic helper launch.
@@ -214,7 +281,17 @@ BIN_DIR="$(swift build --show-bin-path)"
 "$BIN_DIR/printer-helper-checks"
 python3 scripts/smoke_test.py "$BIN_DIR/printer-cli"
 HELPER_CHECKS_BIN="$BIN_DIR/printer-helper-checks" npm test --prefix bridge
+python3 -m unittest discover -s scripts -p 'test_install_printer.py'
 ```
+
+Installer tests use workspace-local fixture installations, including paths with
+spaces, source removal, no-op/repeated updates, running-target refusal, collision
+and symlink rejection, and failure preservation. They mock native signatures for
+non-executable fixture apps, but use the real Node stdio bridge and macOS atomic
+rename. Actual staging separately verifies the real copied app with `codesign`
+and `otool`, and initializes/lists the bridge from an unrelated cwd without
+calling any helper tool. None of these checks proves registered-client tool
+exposure or physical printing.
 
 Repeat with `swift build -c release` and its `--show-bin-path`. Standard XCTest
 remains unavailable on the development Command Line Tools installation; the
