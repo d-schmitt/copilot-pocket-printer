@@ -13,7 +13,9 @@ let package = Package(
         .executable(name: "printer-cli-checks", targets: ["PrinterCLIChecks"]),
         .executable(name: "permission-probe", targets: ["PermissionProbe"]),
         .executable(name: "printer-helper", targets: ["PrinterHelper"]),
-        .executable(name: "printer-helper-checks", targets: ["PrinterHelperChecks"])
+        .executable(name: "printer-helper-checks", targets: ["PrinterHelperChecks"]),
+        .executable(name: "card-renderer", targets: ["CardRenderer"]),
+        .executable(name: "card-renderer-checks", targets: ["CardRendererChecks"])
     ],
     dependencies: [
         .package(
@@ -42,6 +44,13 @@ let package = Package(
             ]
         ),
         .target(name: "PermissionProbeCore"),
+        .target(name: "CardRendererKit", dependencies: ["PrinterCLIKit"]),
+        .executableTarget(name: "CardRenderer", dependencies: ["CardRendererKit"]),
+        .target(name: "CardBehaviorChecks", dependencies: ["CardRendererKit", "PrinterCLIKit"],
+                path: "Tests/CardBehaviorChecks"),
+        .executableTarget(name: "CardRendererChecks", dependencies: ["CardBehaviorChecks"],
+                          path: "Tests/CardRendererChecks"),
+        .testTarget(name: "CardRendererTests", dependencies: ["CardBehaviorChecks"]),
         .target(name: "PrinterHelperKit", dependencies: ["PrinterCLIKit"]),
         .executableTarget(name: "PrinterHelper", dependencies: ["PrinterHelperKit"]),
         .executableTarget(name: "PrinterHelperChecks", dependencies: ["PrinterHelperKit"],

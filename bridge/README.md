@@ -296,6 +296,9 @@ exposure or physical printing.
 Repeat with `swift build -c release` and its `--show-bin-path`. Standard XCTest
 remains unavailable on the development Command Line Tools installation; the
 dependency-free Swift harness exits nonzero on failed assertions.
+The repository's shared `bash scripts/checks.sh` also runs the renderer suites
+and XCTest; `--without-xctest` explicitly omits only that unavailable local
+runtime. PR CI uses the complete command on a full-Xcode macOS runner.
 The Node harness exercises actual child-process stdio initialization/list/call,
 real macOS sockets/peer checks and durable receipts across inert helper
 process restarts. Its executor is explicitly fake and cannot access Bluetooth.
