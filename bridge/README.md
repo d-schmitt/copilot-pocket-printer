@@ -6,40 +6,25 @@ launches a native process, and talks to an independently user-launched
 repository. `examples/mcp-client.example.json` is a generic client example,
 not an automatically loaded Copilot app customization.
 
-**Real Copilot printing passed on 2026-11-15.** After explicit setup approval,
-the user manually registered `pocket-printer`, authorized the helper's own native
-Bluetooth prompt and completed one separately approved test-pattern print.
-Registered status/preview/submission calls and the user's expected-output
-confirmation are recorded in the [verification result](../README.md#copilot-in-app-verification-result).
-The transport receipt still says `submitted_only`, `paper_confirmed: false`;
-user confirmation is separate evidence, not a receipt rewrite.
-
-That first successful test used **native confirmation**, the default. A second
-separately approved Copilot test on the same date verified **AI-client
-confirmation** after the user enabled the one-time helper opt-in. One submission
-immediately returned `in_progress` in `ai_client` mode, then `submitted_only`.
-The user selected exactly **"Yes, correct print with no helper click"** in the
-Project's confirmation control. No native per-print click, duplicate submission
-or retry occurred. See the [single-confirmation evidence](../README.md#single-confirmation-verification-result)
-and the unchanged trust boundary below.
-
-During that test, the Project's discovered tool description still said native
-approval was mandatory, while actual status and execution correctly reported
-`ai_client`. The responsible cache/process is unknown. Existing connections
-may need tool-metadata refresh for accurate wording; this observation does not
-require changing the functioning implementation.
+Start with the [demo quick start](../README.md#try-the-demo). This page is the
+client-neutral installation, tool, and safety reference. Real Copilot/helper
+test-pattern prints have been user-confirmed in both native and opted-in
+AI-client confirmation modes; see the
+[verification boundaries](../docs/architecture.md#verification-boundaries).
+`submitted_only` and `paper_confirmed: false` remain transport receipt fields,
+not a physical-output verdict.
 
 **Keep the helper open.** Closing it produces `helper_not_running`; the bridge
-does not relaunch it. Development rebuilds may require fresh Bluetooth
-permission. These setup prompts are distinct from per-print confirmation.
-All completed test approvals are consumed; this change and the setup procedure
-below do not authorize another paper operation.
+does not relaunch it. Moving or rebuilding may require fresh Bluetooth
+permission. Setup, permission, and each print are separate approvals.
 
 The server implements the narrow JSON-RPC/MCP stdio subset it advertises:
 initialization/version negotiation, `notifications/initialized`, `ping`,
 `tools/list`, `tools/call` and cancellation notifications. It negotiates
 2025-06-18. Older batching-era protocol versions are not advertised.
 There are no resources, prompts, rendering, sampling or task capabilities.
+The separate [card-renderer CLI](../docs/daily-card.md) can produce PNGs for
+these tools; it is not bundled into the installed MCP server.
 The [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)
 and [tool contracts](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 are the protocol references. A maintained SDK was considered first but was
@@ -103,7 +88,9 @@ The default native mode's pending approval expires after five minutes.
 Use one installation sourced from a reviewed, up-to-date `main` checkout.
 Do not register a per-branch `bridge/server.mjs` or keep a development `.build`
 app as the normal runtime. Source is tracked on main; app bundles are not.
-Requirements are macOS 13+, Swift 5.9+, Python 3 and an installed Node 22+.
+Requirements are macOS 13+, a working Swift toolchain, Python 3 and an installed
+Node 22+. Check [toolchain compatibility](../docs/development.md#toolchain-compatibility)
+for the selected revision rather than relying only on package minima.
 From the repository root, prepare without activating:
 
 ```sh
@@ -205,9 +192,62 @@ The bridge defaults to `/tmp/cpp-<uid>/helper.sock`; an explicitly configured
 `POCKET_PRINTER_SOCKET` environment variable can select another private socket
 for tests. There is no network listener or automatic helper launch.
 
-First registered-client calls should be `printer_helper_status` and
-`inspect_png`, with the existing test-pattern bytes. Those calls must be
-observed in the real client; the offline harness is not a Copilot tool call.
+## Find your printer once
+
+Printing requires an explicit device UUID. Neither **Enable Bluetooth** nor
+`printer_helper_status` discovers devices: `ready` describes the local
+controller, not the printer. If you do not already have the UUID, approve one
+native scan and use an independently opened Terminal in this checkout:
+
+```sh
+swift build --product printer-cli
+BIN_DIR="$(swift build --show-bin-path)"
+"$BIN_DIR/printer-cli" status --timeout 8
+```
+
+This is a one-time setup utility, not the MCP runtime. The installer does not
+include `printer-cli`. Status scans advertisements without connecting or sending
+printer commands; observe and authorize the actual native permission owner.
+Do not run direct BLE from the Copilot host or bypass its metadata guard.
+Use the UUID from the exact `Mini Pocket Printer_BLE` match, keeping it private.
+A UUID is not model verification. Multiple matches or no match require user
+resolution, not an arbitrary choice. See [CLI discovery](../docs/cli.md#discovery-and-native-permissions)
+for connected checks and failure meanings.
+
+## Preview and approve one print
+
+The helper must be open for all tools; preview alone does not require Bluetooth
+to be enabled. First use `printer_helper_status` with `{}`. Before physical
+submission, check `health.bluetooth` is `ready`, `health.active_job_id` is absent,
+`health.safety_blocked` is false, and `health.unresolved_job_ids` is empty.
+Read `health.confirmation_mode` and any `health.confirmation_preference_error`;
+do not infer the mode from cached tool wording.
+
+Use the checked-in [synthetic test pattern](../examples/test-pattern.png) for
+the first demo. Encode its existing bytes locally without changing the PNG:
+
+```sh
+python3 -c 'import base64, pathlib; print(base64.b64encode(pathlib.Path("examples/test-pattern.png").read_bytes()).decode("ascii"))'
+```
+
+Pass that single-line value as `png_base64` to `inspect_png`. The tool accepts
+bytes, not the file path, a data-URL prefix, or wrapped base64. Its MCP result
+contains an image plus JSON metadata under `image`: `sha256`, `width`, `height`,
+`png_bytes`, `raster_bands`, and `clearance_dots`. The expected fixture dimensions
+are 384 x 288, with 12 raster bands and 80 clearance dots, about 46 mm total.
+Review the returned black/white preview rather than assuming it matches an
+unprocessed source. The digest identifies the input PNG.
+
+These are the tool argument shapes, not shell commands. The uppercase values
+are placeholders; no submission is authorized by copying them:
+
+```text
+printer_helper_status {}
+inspect_png {"png_base64":"PNG_BASE64"}
+submit_png {"job_id":"NEW-JOB-UUID","device_id":"DISCOVERED-DEVICE-UUID","png_base64":"PNG_BASE64","paper_approved":true}
+get_print_job {"job_id":"SAME-JOB-UUID"}
+cancel_print_job {"job_id":"SAME-JOB-UUID"}
+```
 
 For a **new, separately approved** physical test, choose a job UUID once,
 keep it for every status query, use the discovered device UUID and set
@@ -272,36 +312,10 @@ rollback or hardware power-loss behavior.
 
 ## Offline validation
 
-From the repository root:
-
-```sh
-swift build
-BIN_DIR="$(swift build --show-bin-path)"
-"$BIN_DIR/printer-cli-checks"
-"$BIN_DIR/printer-helper-checks"
-python3 scripts/smoke_test.py "$BIN_DIR/printer-cli"
-HELPER_CHECKS_BIN="$BIN_DIR/printer-helper-checks" npm test --prefix bridge
-python3 -m unittest discover -s scripts -p 'test_install_printer.py'
-```
-
-Installer tests use workspace-local fixture installations, including paths with
-spaces, source removal, no-op/repeated updates, running-target refusal, collision
-and symlink rejection, and failure preservation. They mock native signatures for
-non-executable fixture apps, but use the real Node stdio bridge and macOS atomic
-rename. Actual staging separately verifies the real copied app with `codesign`
-and `otool`, and initializes/lists the bridge from an unrelated cwd without
-calling any helper tool. None of these checks proves registered-client tool
-exposure or physical printing.
-
-Repeat with `swift build -c release` and its `--show-bin-path`. Standard XCTest
-remains unavailable on the development Command Line Tools installation; the
-dependency-free Swift harness exits nonzero on failed assertions.
-The repository's shared `bash scripts/checks.sh` also runs the renderer suites
-and XCTest; `--without-xctest` explicitly omits only that unavailable local
-runtime. PR CI uses the complete command on a full-Xcode macOS runner.
-The Node harness exercises actual child-process stdio initialization/list/call,
-real macOS sockets/peer checks and durable receipts across inert helper
-process restarts. Its executor is explicitly fake and cannot access Bluetooth.
-Those harness runs are not registered Copilot calls or real printing. The
-separate live checkpoint above supplies that evidence for the one approved
-test pattern, not every image, client, device or failure condition.
+See [contributor checks](../docs/development.md#offline-checks) for the shared
+Swift, renderer, process-level Python, Node protocol/receipt, and installer suites.
+`bash scripts/checks.sh` runs the complete CI entry point, including XCTest;
+`--without-xctest` explicitly omits that unavailable local runtime, not other suites.
+They use inert executors or fixtures, not Bluetooth. Offline initialization
+and `tools/list` do not prove registered-client exposure or physical printing;
+observe those separately with explicit setup and paper approvals.

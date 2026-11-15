@@ -9,8 +9,10 @@ The daily layout orders date/daylight, walk recommendation, first/last meeting
 times, then bottom content.
 
 Python 3.9+ with `zoneinfo` and the system timezone database is required for
-assembly. macOS 13+ and Swift 5.9+ are required for rendering. Only standard
-libraries and existing dependencies are used.
+assembly. Rendering requires macOS 13+ and a
+[compatible Swift toolchain](development.md#toolchain-compatibility), not merely
+the manifest's declared minimum. Only standard libraries and existing
+dependencies are used.
 
 ## Call from any assistant or CLI
 
