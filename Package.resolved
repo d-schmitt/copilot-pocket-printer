@@ -1,0 +1,13 @@
+{
+  "pins" : [
+    {
+      "identity" : "pocketprinter5890",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dimer47/PocketPrinter5890.git",
+      "state" : {
+        "revision" : "20118975f6e58d5910657d7ba3daa62c3e5edae9"
+      }
+    }
+  ],
+  "version" : 2
+}
