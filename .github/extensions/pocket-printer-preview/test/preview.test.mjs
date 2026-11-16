@@ -198,10 +198,10 @@ test('loopback boundary serves exact bytes and rejects unauthorized or oversized
   await assert.rejects(fetch(url), /fetch failed/);
 });
 
-test('extension runtime imports stay independent of helper, BLE and portable MCP', async () => {
+test('read-only preview imports stay independent of helper, BLE and portable MCP', async () => {
   const allowed = new Set(['node:http', 'node:crypto', 'node:fs', 'node:fs/promises',
-    'node:path', 'node:url', 'node:zlib', '@github/copilot-sdk/extension', './preview.mjs', './png.mjs']);
-  for (const file of ['extension.mjs', 'preview.mjs', 'png.mjs']) {
+    'node:path', 'node:url', 'node:zlib', './loopback.mjs', './png.mjs']);
+  for (const file of ['preview.mjs', 'loopback.mjs', 'png.mjs']) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
     for (const [, dependency] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
       assert.ok(allowed.has(dependency), `Unexpected runtime dependency: ${dependency}`);

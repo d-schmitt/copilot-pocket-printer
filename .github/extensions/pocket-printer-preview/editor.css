@@ -1,0 +1,33 @@
+@import url("view.css");
+main { max-width: 1240px; }
+h2 { font-size: 18px; margin: 0 0 10px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 20px 0; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button, select {
+  background: var(--background-color-default, #ffffff);
+  border: 1px solid var(--border-color-default, #d1d9e0);
+  border-radius: 6px; padding: 7px 12px;
+}
+button { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+.workspace { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(420px, 1fr); gap: 28px; align-items: start; }
+.section { border: 1px solid var(--border-color-default, #d1d9e0); border-radius: 8px; margin: 12px 0; overflow: hidden; }
+.section header { display: flex; align-items: center; gap: 8px; padding: 12px; cursor: grab; border-bottom: 1px solid var(--border-color-default, #d1d9e0); }
+.section header strong { flex: 1; }
+.section header label { margin: 0; font-weight: normal; font-size: 12px; }
+.section header button { padding: 2px 8px; }
+.section-fields { padding: 12px; }
+.section-fields label { font-size: 12px; margin: 8px 0 4px; }
+.section-fields input:not([type="checkbox"]), textarea {
+  width: 100%; padding: 8px; border: 1px solid var(--border-color-default, #d1d9e0);
+  border-radius: 5px; background: var(--background-color-default, #ffffff);
+}
+textarea { min-height: 88px; resize: vertical; }
+.section[data-enabled="false"] .section-fields { opacity: 0.6; }
+.section.drop-target { outline: 2px solid var(--color-focus-outline, #0969da); }
+.preview-column { position: sticky; top: 16px; }
+.paper-window { margin-top: 16px; min-height: 160px; }
+#card[hidden] { display: none; }
+#save-status { font-size: 12px; color: var(--text-color-muted, #59636e); }
+#saved-drafts { margin-bottom: 20px; }
+@media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } .preview-column { position: static; } }

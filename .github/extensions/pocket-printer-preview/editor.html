@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocket Card Editor</title>
+  <link rel="stylesheet" href="editor.css">
+  <script type="module" src="editor.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">SYNTHETIC STARTING EXAMPLE</span>
+      <h1>Make it your card</h1>
+      <p>Edit the fields, choose a bottom and drag sections into order.</p>
+    </header>
+    <nav class="toolbar" aria-label="Private drafts">
+      <button id="save">Save draft</button>
+      <button id="copy">Save a copy</button>
+      <button id="browse">Open saved draft</button>
+      <span id="save-status" role="status">Unsaved example</span>
+    </nav>
+    <div id="saved-drafts" hidden>
+      <label for="draft-choice">Private drafts on this Mac</label>
+      <select id="draft-choice"></select>
+      <button id="open">Open selected draft</button>
+      <p class="hint">Opening replaces unsaved edits in this panel.</p>
+    </div>
+    <p id="error" role="alert" hidden></p>
+    <div class="workspace">
+      <section aria-label="Editable card sections">
+        <p class="hint">Drag a section heading to reorder. Up/down buttons also work with the keyboard.</p>
+        <div id="sections"></div>
+      </section>
+      <section class="preview-column" aria-label="Current print preview">
+        <h2>Preview</h2>
+        <p id="render-status" role="status">Rendering example...</p>
+        <div id="metadata"></div>
+        <p class="hint">Estimated paper includes 80 clearance dots at nominal 203 dpi.</p>
+        <div class="paper-window" tabindex="0" role="region" aria-label="384-pixel card preview; scroll if needed">
+          <img id="card" width="384" alt="Current rendered card" hidden>
+        </div>
+        <div id="printing"></div>
+        <p class="hint">Original renderer PNG, not yet inspected by the helper. No printing in this editor increment.</p>
+      </section>
+    </div>
+    <footer>
+      Save/Open stores at most 20 drafts privately on this Mac, outside Git.
+      New panels start with this synthetic example. Unsaved edits are discarded on close or provider reload.
+      No live weather or calendar is fetched.
+    </footer>
+  </main>
+</body>
+</html>
