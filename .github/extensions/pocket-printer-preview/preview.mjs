@@ -1,15 +1,13 @@
-import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { inspectPng, readLocalPng, PreviewError, MAX_PNG } from './png.mjs';
+import { servePanel, readBody } from './loopback.mjs';
 
 const emptyInput = { type: 'object', properties: {}, additionalProperties: false };
-const assets = new Map([
-  ['', ['view.html', 'text/html; charset=utf-8']],
-  ['view.js', ['view.js', 'text/javascript; charset=utf-8']],
-  ['view.css', ['view.css', 'text/css; charset=utf-8']]
-]);
+const assets = {
+  '': ['view.html', 'text/html; charset=utf-8'],
+  'view.js': ['view.js', 'text/javascript; charset=utf-8'],
+  'view.css': ['view.css', 'text/css; charset=utf-8']
+};
 const samplePath = fileURLToPath(new URL('./sample.png', import.meta.url));
 
 export function previewCanvas(ErrorType = PreviewError) {
@@ -48,83 +46,21 @@ export function previewCanvas(ErrorType = PreviewError) {
   }
   async function startServer() {
     const image = await readLocalPng(samplePath);
-    const staticAssets = new Map(await Promise.all([...assets].map(async ([route, [file, type]]) =>
-      [route, { type, bytes: await readFile(new URL(file, import.meta.url)) }])));
     const panel = { image, metadata: inspectPng(image), source: 'Bundled synthetic sample',
       revision: 1, error: null, busy: false, closed: false };
-    const prefix = `/${randomBytes(32).toString('hex')}/`;
-    const server = createServer((req, res) => {
-      void respond(req, res).catch(error => {
-        failure(panel, error);
-        if (!res.headersSent) res.writeHead(500);
-        res.end('Preview request failed.');
-      });
+    const listener = await servePanel({
+      assets,
+      get: route => {
+        if (route === 'state') return { type: 'application/json', body: JSON.stringify(state(panel)) };
+        if (route === 'image.png') return { type: 'image/png', body: panel.image };
+      },
+      post: {
+        image: req => replace(panel, () => readBody(req, MAX_PNG, 'image/png'), 'Explicitly selected local PNG')
+      },
+      onError: error => { failure(panel, error); return panel.error; }
     });
-    server.requestTimeout = 10_000;
-    server.headersTimeout = 10_000;
-    server.maxConnections = 16;
-    async function respond(req, res) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Referrer-Policy', 'no-referrer');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Content-Security-Policy',
-        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'");
-      if (req.headers.host !== new URL(panel.url).host ||
-          (req.headers.origin && req.headers.origin !== panel.origin)) {
-        res.writeHead(403); res.end('Forbidden.'); return;
-      }
-      const url = new URL(req.url, panel.origin);
-      if (!url.pathname.startsWith(prefix)) { res.writeHead(404); res.end('Not found.'); return; }
-      const route = url.pathname.slice(prefix.length);
-      if (req.method === 'GET') {
-        const asset = staticAssets.get(route);
-        if (asset) { res.setHeader('Content-Type', asset.type); res.end(asset.bytes); return; }
-        if (route === 'state') {
-          res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(state(panel))); return;
-        }
-        if (route === 'image.png') {
-          res.setHeader('Content-Type', 'image/png'); res.end(panel.image); return;
-        }
-        res.writeHead(404); res.end('Not found.'); return;
-      }
-      if (req.method !== 'POST' || route !== 'image') {
-        res.writeHead(405); res.end('Method not allowed.'); return;
-      }
-      if (req.headers.origin !== panel.origin) { res.writeHead(403); res.end('Forbidden.'); return; }
-      res.setHeader('Content-Type', 'application/json');
-      try {
-        const result = await replace(panel, async () => {
-          if (req.headers['content-type'] !== 'image/png') {
-            throw new PreviewError('invalid_png', 'Choose a PNG file.');
-          }
-          if (Number(req.headers['content-length']) > MAX_PNG) {
-            throw new PreviewError('invalid_png', 'PNG must be at most 1 MiB.');
-          }
-          const chunks = [];
-          let size = 0;
-          // A separate deadline also bounds an otherwise valid but stalled upload.
-          const timer = setTimeout(() => req.destroy(), 10_000);
-          try {
-            for await (const chunk of req) {
-              size += chunk.length;
-              if (size > MAX_PNG) throw new PreviewError('invalid_png', 'PNG must be at most 1 MiB.');
-              chunks.push(chunk);
-            }
-          } finally { clearTimeout(timer); }
-          return Buffer.concat(chunks);
-        }, 'Explicitly selected local PNG');
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        res.writeHead(400); res.end(JSON.stringify({ error: { code: error.code, message: error.message } }));
-      }
-    }
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
-    });
-    panel.origin = `http://127.0.0.1:${server.address().port}`;
-    panel.url = panel.origin + prefix;
-    panel.server = server;
+    panel.url = listener.url;
+    panel.close = listener.close;
     return panel;
   }
   return {
@@ -166,10 +102,7 @@ export function previewCanvas(ErrorType = PreviewError) {
       const panel = await pending;
       panel.closed = true;
       panel.image = null;
-      await new Promise(resolve => {
-        panel.server.close(resolve);
-        panel.server.closeAllConnections();
-      });
+      await panel.close();
     }
   };
 }

@@ -84,6 +84,11 @@ struct HelperChecks {
         try check(calls == 0, "construction must not execute")
         let health = service.handle(try request("helper_status"))
         try check(health.ok && health.result?.health?.bluetooth == "ready", "pure status")
+        try check(health.result?.health?.supports_expected_confirmation_mode == true, "status advertises atomic confirmation-mode guard")
+        var oldHealth = try JSONSerialization.jsonObject(with: JSONEncoder().encode(health.result!.health!)) as! [String: Any]
+        oldHealth.removeValue(forKey: "supports_expected_confirmation_mode")
+        let legacyHealth = try JSONDecoder().decode(HelperHealth.self, from: JSONSerialization.data(withJSONObject: oldHealth))
+        try check(legacyHealth.supports_expected_confirmation_mode == nil, "old status decodes without claiming support for the new guard")
         let inspected = service.handle(try request("inspect_png", ["png_base64": encoded]))
         try check(inspected.result?.image?.width == 384 && inspected.result?.image?.height == 288, "inspect actual PNG")
         let exactPreview = Data(base64Encoded: inspected.result!.preview_png_base64!)!
@@ -115,6 +120,13 @@ struct HelperChecks {
             try check(service.handle(try request("submit_png", fields)).error?.code == "bluetooth_\(permission)", "typed permission failure")
         }
         state = "ready"
+        var guarded = fields; guarded["expected_confirmation_mode"] = "ai_client"
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "confirmation_mode_changed" && calls == 0,
+                  "stale mode guard rejects before durable admission or execution")
+        guarded["expected_confirmation_mode"] = NSNull()
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "invalid_request", "null mode guard is not an omitted guard")
+        guarded["expected_confirmation_mode"] = "unknown"
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "invalid_request", "unknown mode guard rejected")
         let admitted = service.handle(try request("submit_png", fields))
         try check(admitted.result?.receipt?.state == "awaiting_approval" && calls == 0, "MCP alone cannot physically print")
         let id = admitted.result!.receipt!.job_id
@@ -203,7 +215,70 @@ struct HelperChecks {
         corrupt.close()
         service.close(); restarted.close(); afterCrash.close()
         try await confirmationChecks(root: root, fields: fields)
+        try await discoveryChecks(root: root, fields: fields)
         print("PASS \(assertionCount) helper assertions: approval, PNG bounds, errors, durable IDs, busy, cancellation and restart uncertainty. No Bluetooth.")
+    }
+
+    @MainActor static func discoveryChecks(root: URL, fields: [String: Any]) async throws {
+        var scans = 0, stops = 0, executions = 0
+        let values = (0..<40).map { _ in DiscoveredPrinter(id: UUID(), name: PrinterSelection.advertisedName, rssi: -60) }
+        let discovery = HelperDiscovery(timeout: 20_000_000) { receive in
+            scans += 1
+            defer { stops += 1 }
+            receive([values[0], values[0], DiscoveredPrinter(id: UUID(), name: "Keyboard", rssi: -40)] + values)
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        let store = try ReceiptStore(directory: root.appendingPathComponent("discovery"))
+        var radio = "not_requested"
+        let service = try HelperService(store: store, bluetooth: { radio }, discovery: discovery) { _, _ in
+            executions += 1; return "INERT"
+        }
+        func call(_ method: String, _ id: UUID) throws -> HelperReply {
+            service.handle(try request(method, ["scan_id": id.uuidString]))
+        }
+        func settle() async throws {
+            for _ in 0..<100 {
+                if !discovery.running { return }
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            throw CheckError.assertion("Discovery failed to stop")
+        }
+        try check(service.handle(try request("helper_status")).result?.health?.supports_printer_discovery == true && scans == 0,
+                  "opening/status advertises discovery without accessing Bluetooth")
+        try check(try call("start_discovery", UUID()).result?.discovery?.state == "permission_required" && scans == 0,
+                  "scan cannot bypass explicit native Bluetooth enable")
+        radio = "off"
+        try check(try call("start_discovery", UUID()).result?.discovery?.state == "unavailable" && scans == 0, "radio-off scan does not start")
+        radio = "ready"
+        let id = UUID()
+        try check(try call("start_discovery", id).result?.discovery?.state == "scanning", "explicit scan starts")
+        try check(try call("start_discovery", UUID()).error?.code == "discovery_busy", "scans serialize across clients")
+        try check(service.handle(try request("submit_png", fields)).error?.code == "discovery_busy", "print admission cannot overlap discovery")
+        try check(try store.all().isEmpty && executions == 0, "scanning creates no print receipt or dispatch")
+        await Task.yield()
+        let snapshot = try call("discovery_status", id).result!.discovery!
+        try check(snapshot.devices.count == 32 && Set(snapshot.devices.map(\.id)).count == 32, "results are filtered, deduplicated and capped")
+        try check(try call("start_discovery", id).result?.discovery?.scan_id == id && scans == 1, "same scan identity never starts twice")
+        try check(try call("stop_discovery", UUID()).error?.code == "unknown_scan" && discovery.running, "another panel cannot stop this scan")
+        try check(try call("stop_discovery", id).result?.discovery?.state == "stopping" && discovery.running, "stop does not release admission until cleanup")
+        try await settle()
+        try check(discovery.snapshot.state == "stopped" && stops == 1 && executions == 0, "explicit stop cleans up without printing")
+        _ = try call("start_discovery", UUID())
+        try await settle()
+        try check(scans == 2 && stops == 2 && discovery.snapshot.state == "stopped", "absolute time bound cancels scanner")
+        try check(service.handle(try request("submit_png", fields)).result?.receipt?.state == "awaiting_approval", "print can be admitted after scan cleanup")
+        try check(try call("start_discovery", UUID()).error?.code == "busy", "discovery cannot overlap an admitted print")
+        service.cancelActive()
+        _ = try call("start_discovery", UUID())
+        await Task.yield()
+        service.close()
+        try await settle()
+        try check(stops == 3 && executions == 0, "helper close stops the scan without starting physical work")
+        let denied = HelperDiscovery { _ in throw CLIError.bluetoothDenied }
+        _ = try denied.start(id: UUID(), bluetooth: "ready")
+        for _ in 0..<100 where denied.running { try await Task.sleep(nanoseconds: 1_000_000) }
+        try check(denied.snapshot.state == "permission_required" && !denied.running, "permission loss is visible and terminal")
+        try check(service.handle(try request("start_discovery", ["scan_id": NSNull()])).error?.code == "invalid_request", "null scan identity is invalid")
     }
 
     @MainActor static func renderPreview(_ service: HelperService, suffix: String = "") throws {
@@ -253,7 +328,11 @@ struct HelperChecks {
             try check(service.handle(try request("submit_png", fresh)).error?.code == "bluetooth_\(state)" && calls == 0, "client mode preserves Bluetooth guard")
         }
         radio = "ready"
-        let admitted = service.handle(try request("submit_png", fresh)).result!.receipt!
+        var staleNativeMode = fresh; staleNativeMode["expected_confirmation_mode"] = "native"
+        try check(service.handle(try request("submit_png", staleNativeMode)).error?.code == "confirmation_mode_changed" && calls == 0,
+                  "native-to-client mode change cannot turn a stale approval into immediate execution")
+        var guardedFresh = fresh; guardedFresh["expected_confirmation_mode"] = "ai_client"
+        let admitted = service.handle(try request("submit_png", guardedFresh)).result!.receipt!
         try check(admitted.state == "in_progress" && admitted.confirmation_mode == .aiClient && calls == 0, "same-turn admission returns current persisted state before scheduled execution")
         try renderPreview(service, suffix: "ai-client")
         try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "in_progress", "same in-flight ID cannot schedule another execution")

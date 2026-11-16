@@ -10,6 +10,7 @@ public struct IntegrationChecks {
     public var cases: [(name: String, run: () async throws -> Void)] {
         [
             ("scan-only does not connect or write", scanOnly),
+            ("printer picker filters advertisements and cancels without connecting", pickerScan),
             ("confirmed connected status sends one activated read batch", connectedStatus),
             ("unknown status is not a successful reply", unknownStatus),
             ("discovery/readiness timeouts never send", readinessTimeouts),
@@ -44,6 +45,37 @@ public struct IntegrationChecks {
         try expect(result.contains("DISCOVERED ONLY"))
         try equal(link.connectCount, 0)
         try equal(link.batches.count, 0)
+    }
+
+    private func pickerScan() async throws {
+        let link = FakePrinterLink()
+        link.additionalDevices = [PrinterDevice(id: UUID(), name: "Keyboard", rssi: -30, isLikelyL13: false),
+            PrinterDevice(id: UUID(), name: PrinterSelection.advertisedName, rssi: 127, isLikelyL13: true)]
+        var devices: [DiscoveredPrinter] = []
+        try await PrinterClient(link: link, timing: timing).scanPrinters { devices = $0 }
+        try equal(devices.count, 2)
+        try expect(devices.contains { $0.rssi == nil })
+        try equal(link.scanStarts, 1)
+        try equal(link.scanStops, 1)
+        try equal(link.connectCount, 0)
+        try equal(link.batches.count, 0)
+        let cancelled = FakePrinterLink()
+        var slow = timing; slow.discovery = 1
+        let task = Task { try await PrinterClient(link: cancelled, timing: slow).scanPrinters { _ in } }
+        try await Task.sleep(nanoseconds: 2_000_000)
+        task.cancel()
+        do { try await task.value; throw CheckFailure(description: "Cancelled scan completed") }
+        catch is CancellationError {}
+        try equal(cancelled.scanStops, 1)
+        try equal(cancelled.connectCount, 0)
+        try equal(cancelled.batches.count, 0)
+        let off = FakePrinterLink()
+        off.onScan = { $0.connection = .failed(.bluetoothUnavailable) }
+        try await rejectsAsync("bluetooth_unavailable") {
+            try await PrinterClient(link: off, timing: timing).scanPrinters { _ in }
+        }
+        try equal(off.scanStops, 1)
+        try equal(off.connectCount, 0)
     }
 
     private func connectedStatus() async throws {
@@ -242,7 +274,11 @@ private final class FakePrinterLink: PrinterLink {
     var bluetoothReady = true
     var permissionDenied = false
     let device = PrinterDevice(id: UUID(), name: "Mini Pocket Printer_BLE", rssi: -61, isLikelyL13: true)
-    var devices: [PrinterDevice] { [device] }
+    var additionalDevices: [PrinterDevice] = []
+    var devices: [PrinterDevice] { [device] + additionalDevices }
+    var scanStarts = 0
+    var scanStops = 0
+    var onScan: (FakePrinterLink) -> Void = { _ in }
     var hasRequiredProfile = true
     var readings = DeviceReadings()
     var connectCount = 0
@@ -256,8 +292,8 @@ private final class FakePrinterLink: PrinterLink {
         $0.writes = .drained
     }
 
-    func startScan() {}
-    func stopScan() {}
+    func startScan() { scanStarts += 1; onScan(self) }
+    func stopScan() { scanStops += 1 }
     func connect(to device: PrinterDevice) {
         connectCount += 1
         connection = .connecting

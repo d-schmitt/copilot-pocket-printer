@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocket Card Editor</title>
+  <link rel="stylesheet" href="editor.css">
+  <script type="module" src="editor.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">SYNTHETIC STARTING EXAMPLE</span>
+      <h1>Make it your card</h1>
+      <p>Edit the fields, choose a bottom and drag sections into order.</p>
+    </header>
+    <nav class="toolbar" aria-label="Private drafts">
+      <button id="save">Save draft</button>
+      <button id="copy">Save a copy</button>
+      <button id="browse">Open saved draft</button>
+      <span id="save-status" role="status">Unsaved example</span>
+    </nav>
+    <div id="saved-drafts" hidden>
+      <label for="draft-choice">Private drafts on this Mac</label>
+      <select id="draft-choice"></select>
+      <button id="open">Open selected draft</button>
+      <p class="hint">Opening replaces unsaved edits in this panel.</p>
+    </div>
+    <p id="error" role="alert" hidden></p>
+    <div class="workspace">
+      <section aria-label="Editable card sections">
+        <p class="hint">Drag a section heading to reorder. Up/down buttons also work with the keyboard.</p>
+        <div id="sections"></div>
+      </section>
+      <section class="preview-column" aria-label="Current print preview">
+        <h2>Preview</h2>
+        <p id="render-status" role="status">Rendering example...</p>
+        <div id="metadata"></div>
+        <p class="hint">Estimated paper includes 80 clearance dots at nominal 203 dpi.</p>
+        <div class="paper-window" tabindex="0" role="region" aria-label="384-pixel card preview; scroll if needed">
+          <!-- Hidden until the script assigns a successfully rendered revision URL. -->
+          <img id="card" width="384" alt="Current rendered card" hidden>
+        </div>
+        <p class="hint">The image above is the renderer PNG. Select a discovered printer below to prepare its exact print preview.</p>
+        <section id="printing" hidden aria-label="Explicitly approved printing">
+          <h2>Print one card</h2>
+          <button id="scan">Scan for printers</button>
+          <button id="stop-scan" disabled>Stop scan</button>
+          <p id="scan-status" role="status">No scan started.</p>
+          <label for="target">Printer</label>
+          <select id="target"><option value="">Select a discovered printer</option></select>
+          <button id="inspect">Refresh print preview</button>
+          <p id="print-ready" role="status">Scan and select your printer. The exact print preview will update automatically.</p>
+          <p class="hint">Finds compatible advertised BLE printers, not every Bluetooth device.
+            Scans stop within 10 seconds. Selection is kept only in this panel.</p>
+          <p class="hint">The helper must already be running. Printer reachability and paper supply are not guaranteed.</p>
+          <div id="approval" hidden>
+            <p id="helper-state"></p>
+            <p id="print-binding"></p>
+            <div class="paper-window" id="print-image"></div>
+            <p class="hint">Clicking Print sends this displayed bitmap to the printer above once, using the estimated paper shown.
+              In AI-client mode it starts immediately. Native mode still asks in the helper.</p>
+            <button id="confirm" disabled>Print</button>
+          </div>
+          <p id="job-status" role="status"></p>
+          <button id="status" disabled>Check original job status</button>
+          <button id="history">Find retained job</button>
+          <div id="job-history" hidden>
+            <p id="capacity"></p>
+            <label for="job-choice">Retained intent</label><select id="job-choice"></select>
+            <button id="recover">Query selected job only</button>
+            <button id="discard-intent">Discard unsubmitted intent</button>
+          </div>
+          <p class="hint">No automatic retries. Closing this panel does not cancel an admitted job.
+            Native mode and uncertainty recovery remain in the helper.</p>
+        </section>
+      </section>
+    </div>
+    <footer>
+      Save/Open stores at most 20 drafts privately on this Mac, outside Git.
+      New panels start with this synthetic example. Unsaved edits are discarded on close or provider reload.
+      No live weather or calendar is fetched.
+    </footer>
+  </main>
+</body>
+</html>

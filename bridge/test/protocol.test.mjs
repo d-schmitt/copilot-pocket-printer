@@ -261,3 +261,31 @@ test('cancelled bridge request reports uncertainty with the original job ID', as
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(pending, error => error.code === 'request_cancelled' && error.message.includes(fields.job_id) && error.message.includes('Admission may have occurred'));
 });
+
+test('only correlated helper errors establish reply provenance, not transport or uncorrelated errors', async t => {
+  const directory = await mkdtemp('/tmp/cppreply-');
+  const socketPath = path.join(directory, 'helper.sock');
+  let mode = 'correlated';
+  const server = net.createServer(socket => {
+    let bytes = Buffer.alloc(0);
+    socket.on('data', data => {
+      bytes = Buffer.concat([bytes, data]);
+      if (bytes.length < 4 || bytes.length < 4 + bytes.readUInt32BE(0)) return;
+      if (mode === 'truncated') { socket.end(); return; }
+      const request = JSON.parse(bytes.subarray(4).toString());
+      const payload = Buffer.from(JSON.stringify({ version: 1, ok: false,
+        request_id: mode === 'correlated' ? request.request_id : null,
+        error: { code: 'busy', message: 'INERT rejection before admission' } }));
+      const frame = Buffer.alloc(4 + payload.length);
+      frame.writeUInt32BE(payload.length); payload.copy(frame, 4); socket.end(frame);
+    });
+  });
+  await new Promise(resolve => server.listen(socketPath, resolve));
+  await chmod(socketPath, 0o600);
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  for (const [value, code, provenance] of [['correlated', 'busy', true], ['uncorrelated', 'busy', false], ['truncated', 'ipc_truncated', false]]) {
+    mode = value;
+    await assert.rejects(callHelper('submit_png', { job_id: randomUUID() }, { socketPath }),
+      error => error.code === code && error.helperReported === provenance);
+  }
+});
