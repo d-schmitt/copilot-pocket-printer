@@ -12,7 +12,7 @@ const MAX_RECORD = 3 * 1024 * 1024;
 const MAX_INTENTS = 64;
 const keyPattern = /^[a-f0-9]{64}$/;
 const states = ['awaiting_approval', 'in_progress', 'cancelling', 'submitted_only', 'cancelled_before_submission', 'uncertain'];
-const noAdmissionCodes = new Set(['busy', 'safety_blocked', 'confirmation_mode_changed',
+const noAdmissionCodes = new Set(['busy', 'discovery_busy', 'safety_blocked', 'confirmation_mode_changed',
   'helper_closing', 'invalid_request', 'paper_approval_required', 'invalid_image', 'preview_failed',
   'bluetooth_permission_pending', 'bluetooth_denied', 'bluetooth_restricted', 'bluetooth_off',
   'bluetooth_unsupported', 'bluetooth_unknown', 'bluetooth_not_determined']);
@@ -157,6 +157,43 @@ export class Printing {
     this.helper = helper;
   }
   async health() { return validHealth((await this.helper('helper_status', {})).health); }
+  async discovery(method, scanId) {
+    requireId(scanId);
+    try {
+      if (method === 'start_discovery' && (await this.health()).supports_printer_discovery !== true) {
+        throw new PreviewError('helper_upgrade_required', 'Update and independently reopen the helper to use the printer picker.');
+      }
+      const { discovery } = await this.helper(method, { scan_id: scanId });
+      if (!discovery || discovery.scan_id?.toLowerCase() !== scanId ||
+          !['scanning', 'stopping', 'stopped', 'unavailable', 'permission_required', 'error'].includes(discovery.state) ||
+          typeof discovery.message !== 'string' || discovery.message.length > 512 ||
+          !Array.isArray(discovery.devices) || discovery.devices.length > 32) {
+        throw new PreviewError('invalid_discovery', 'The helper returned an invalid discovery response.');
+      }
+      const seen = new Set();
+      const devices = discovery.devices.map(device => {
+        const id = device.id?.toLowerCase(); requireId(id);
+        if (seen.has(id) || device.name !== 'Mini Pocket Printer_BLE' ||
+            (device.rssi !== undefined && (!Number.isInteger(device.rssi) || device.rssi < -127 || device.rssi > 20))) {
+          throw new PreviewError('invalid_discovery', 'The helper returned invalid printer details.');
+        }
+        seen.add(id);
+        return { id, name: device.name, rssi: device.rssi ?? null };
+      });
+      return { scanId, state: discovery.state, devices, message: discovery.message };
+    } catch (error) {
+      if (error instanceof PreviewError) throw error;
+      const messages = {
+        helper_not_running: 'Open Pocket Printer Helper independently, then choose Scan for printers.',
+        busy: 'Finish or resolve the current print job before scanning.',
+        discovery_busy: 'Another scan is running. Stop it or wait for it to finish.',
+        unknown_scan: 'This scan is no longer available. Choose Scan for printers again.',
+        ipc_timeout: 'The helper did not answer. A scan may still be running for up to 10 seconds; use Stop scan.',
+        unsafe_socket: 'The helper connection has unsafe permissions. Inspect the helper setup before continuing.'
+      };
+      throw new PreviewError('discovery_failed', messages[error.code] ?? 'Printer discovery failed. Check the helper and Bluetooth permissions, then scan again.');
+    }
+  }
   async assertSettled() {
     for (const key of await this.ledger.keys()) {
       const previous = await this.ledger.read(key);
@@ -217,7 +254,8 @@ export class Printing {
       await this.assertSettled();
       const health = await this.health();
       if (health.supports_expected_confirmation_mode !== true || health.confirmation_mode !== intent.mode ||
-          health.confirmation_preference_error || health.safety_blocked || health.active_job_id || health.bluetooth !== 'ready') {
+          health.confirmation_preference_error || health.safety_blocked || health.active_job_id ||
+          health.discovery_active || health.bluetooth !== 'ready') {
         throw new PreviewError('helper_not_ready', 'Helper state or confirmation mode changed. Inspect again; no job was dispatched.');
       }
       current();

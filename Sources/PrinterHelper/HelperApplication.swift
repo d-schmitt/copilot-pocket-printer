@@ -25,7 +25,12 @@ final class HelperDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         authorization.changed = { [weak self] in self?.refresh() }
         do {
             let store = try ReceiptStore(directory: HelperPaths.receiptDirectory)
-            let service = try HelperService(store: store, bluetooth: { [weak self] in self?.authorization.state ?? "unavailable" }) { job, device in
+            let discovery = HelperDiscovery { onChange in
+                let client = try PrinterClient.native(timeout: 8)
+                try await client.scanPrinters(onChange: onChange)
+            }
+            let service = try HelperService(store: store, bluetooth: { [weak self] in self?.authorization.state ?? "unavailable" },
+                                            discovery: discovery) { job, device in
                 let client = try PrinterClient.native(timeout: 8)
                 return try await client.submit(job, deviceID: device)
             }

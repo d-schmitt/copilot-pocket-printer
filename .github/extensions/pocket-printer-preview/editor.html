@@ -41,13 +41,18 @@
           <!-- Hidden until the script assigns a successfully rendered revision URL. -->
           <img id="card" width="384" alt="Current rendered card" hidden>
         </div>
-        <p class="hint">The image above is the renderer PNG. Select a printer below to prepare its exact print preview.</p>
+        <p class="hint">The image above is the renderer PNG. Select a discovered printer below to prepare its exact print preview.</p>
         <section id="printing" hidden aria-label="Explicitly approved printing">
           <h2>Print one card</h2>
-          <label for="target">Explicit printer UUID</label>
-          <input id="target" type="text" autocomplete="off" spellcheck="false" placeholder="Printer UUID from your approved setup">
+          <button id="scan">Scan for printers</button>
+          <button id="stop-scan" disabled>Stop scan</button>
+          <p id="scan-status" role="status">No scan started.</p>
+          <label for="target">Printer</label>
+          <select id="target"><option value="">Select a discovered printer</option></select>
           <button id="inspect">Refresh print preview</button>
-          <p id="print-ready" role="status">Enter your printer UUID. The exact print preview will update automatically.</p>
+          <p id="print-ready" role="status">Scan and select your printer. The exact print preview will update automatically.</p>
+          <p class="hint">Finds compatible advertised BLE printers, not every Bluetooth device.
+            Scans stop within 10 seconds. Selection is kept only in this panel.</p>
           <p class="hint">The helper must already be running. Printer reachability and paper supply are not guaranteed.</p>
           <div id="approval" hidden>
             <p id="helper-state"></p>

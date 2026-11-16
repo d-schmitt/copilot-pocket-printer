@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { PreviewError, inspectPng } from './png.mjs';
 import { exampleDraft, validateDraft, objectKeys, renderDraft } from './draft.mjs';
 import { draftStore } from './private-store.mjs';
@@ -23,6 +23,9 @@ export class CardEditor {
     this.printGeneration = 0;
     this.dispatching = false;
     this.job = null;
+    this.discovery = { state: 'idle', devices: [], message: 'Scan for compatible advertised BLE printers.' };
+    this.scanId = null;
+    this.selectedPrinter = null;
   }
   fail(error) {
     const diagnostic = typeof error.code === 'string' && /^[A-Z_]{1,40}$/.test(error.code) ? error.code :
@@ -39,6 +42,7 @@ export class CardEditor {
       saved: this.saved, rendering: Boolean(this.rendering), error: this.error,
       image: this.imageMetadata,
       printingAvailable: Boolean(this.printing),
+      discovery: this.discovery, selectedPrinter: this.selectedPrinter,
       prepared: prepared ? {
         jobId: prepared.intent.jobId, target: prepared.intent.target, digest: prepared.intent.digest,
         bitmapDigest: prepared.intent.bitmapDigest, revision: prepared.revision,
@@ -146,6 +150,52 @@ export class CardEditor {
     this.error = null;
     return this.state();
   }
+  async startScan(input) {
+    this.mutable(); objectKeys(input, []);
+    if (['scanning', 'stopping'].includes(this.discovery.state)) {
+      throw new PreviewError('discovery_busy', 'Wait for the current scan to stop.');
+    }
+    this.invalidatePrint(); this.selectedPrinter = null;
+    const scanId = randomUUID();
+    this.scanId = scanId;
+    this.discovery = { scanId, state: 'scanning', devices: [], message: 'Starting printer discovery...' };
+    try {
+      const result = await this.printing.discovery('start_discovery', scanId);
+      if (this.closed) {
+        await this.printing.discovery('stop_discovery', scanId);
+        throw new PreviewError('panel_closed', 'The panel closed; printer discovery was stopped.');
+      }
+      this.discovery = result; this.error = null;
+      return this.state();
+    } catch (error) {
+      this.discovery = { scanId, state: 'error', devices: [], message: 'Discovery unavailable. Check the error before scanning again.' };
+      throw error;
+    }
+  }
+  async scanStatus(input, stop = false) {
+    objectKeys(input, []);
+    const scanId = this.scanId;
+    if (!scanId) throw new PreviewError('unknown_scan', 'Choose Scan for printers first.');
+    try {
+      const result = await this.printing.discovery(stop ? 'stop_discovery' : 'discovery_status', scanId);
+      if (scanId !== this.scanId) throw new PreviewError('stale_scan', 'A newer scan replaced this result.');
+      this.discovery = result;
+    } catch (error) {
+      if (scanId === this.scanId) this.discovery = { ...this.discovery, state: 'error', message: 'Scan status unavailable. Stop the scan or try again explicitly.' };
+      throw error;
+    }
+    this.error = null;
+    return this.state();
+  }
+  selectPrinter(input) {
+    this.mutable(); objectKeys(input, ['id']);
+    this.invalidatePrint();
+    const device = this.discovery.devices.find(value => value.id === input.id);
+    if (input.id && !device) throw new PreviewError('unknown_printer', 'Choose a printer from this scan, or scan again.');
+    this.selectedPrinter = device ?? null;
+    this.error = null;
+    return this.state();
+  }
   async confirmPrint(input) {
     objectKeys(input, ['revision', 'jobId', 'target', 'digest', 'bitmapDigest', 'inspectionId', 'approvalToken', 'paperApproved']);
     const prepared = this.prepared;
@@ -173,10 +223,13 @@ export class CardEditor {
     finally { this.dispatching = false; }
     return this.state();
   }
-  close() {
+  async close() {
     this.closed = true;
     this.changed();
     this.draft = null;
+    if (this.scanId && ['scanning', 'stopping', 'error'].includes(this.discovery.state)) {
+      try { await this.scanStatus({}, true); } catch (error) { this.fail(error); }
+    }
   }
 }
 
@@ -275,6 +328,10 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
                   return Array.isArray(result) ? result : editor.state(true);
                 }])),
               ...(editor.printing ? {
+                start_scan: async req => { await editor.startScan(await readJson(req)); return editor.state(true); },
+                scan_status: async req => { await editor.scanStatus(await readJson(req)); return editor.state(true); },
+                stop_scan: async req => { await editor.scanStatus(await readJson(req), true); return editor.state(true); },
+                select_printer: async req => { editor.selectPrinter(await readJson(req)); return editor.state(true); },
                 discard_unsubmitted: async req => {
                   const input = await readJson(req);
                   objectKeys(input, ['jobId', 'confirmed']);
@@ -308,7 +365,7 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
       if (!pending) return;
       panels.delete(ctx.instanceId);
       const panel = await pending;
-      panel.editor.close();
+      await panel.editor.close();
       await panel.server.close();
     }
   };

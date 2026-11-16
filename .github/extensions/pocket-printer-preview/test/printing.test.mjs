@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { PreviewError } from '../png.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -113,7 +114,7 @@ test('mode changes and native unsafe/active states fail before the claim', async
   const value = await prepared(t);
   for (const [field, changed] of [['confirmation_mode', 'native'], ['safety_blocked', true],
     ['bluetooth', 'off'], ['active_job_id', randomUUID()], ['supports_expected_confirmation_mode', false],
-    ['confirmation_preference_error', { code: 'failed' }]]) {
+    ['confirmation_preference_error', { code: 'failed' }], ['discovery_active', true]]) {
     const previous = value.health[field]; value.health[field] = changed;
     await assert.rejects(value.service.dispatch(value.intent, () => {}), /state or confirmation mode changed/);
     value.health[field] = previous;
@@ -196,8 +197,10 @@ test('confirmation binds every value and consumes one approval before dispatch',
 test('two separate provider processes admit at most one dispatch', async t => {
   const value = await prepared(t);
   const log = join(value.directory, 'inert-submissions.log');
+  const projectModule = new URL('../printing.mjs', import.meta.url).href;
+  const otherModule = process.env.POCKET_TEST_PACKAGED_PRINTING ?? projectModule;
   const script = `
-    import { Printing, PrintLedger } from ${JSON.stringify(new URL('../printing.mjs', import.meta.url).href)};
+    const { Printing, PrintLedger } = await import(process.argv[1]);
     import { appendFile } from 'node:fs/promises';
     const ledger = new PrintLedger(${JSON.stringify(value.directory)});
     const intent = await ledger.read(${JSON.stringify(value.intent.key)});
@@ -209,14 +212,14 @@ test('two separate provider processes admit at most one dispatch', async t => {
     }});
     try { await service.dispatch(intent,()=>{}); } catch(error) { if(error.code!=='storage_locked')throw error; }
   `;
-  const run = () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const run = (module = projectModule) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, module], { stdio: ['ignore', 'ignore', 'pipe'] });
     let error = ''; child.stderr.on('data', data => { error += data; });
     child.on('error', reject); child.on('exit', code => code === 0 ? resolve() : reject(new Error(error)));
   });
-  await Promise.all([run(), run()]);
+  await Promise.all([run(), run(otherModule)]);
   assert.equal(await readFile(log, 'utf8'), 'inert\n');
-  await run();
+  await run(otherModule);
   assert.equal(await readFile(log, 'utf8'), 'inert\n');
 });
 
@@ -335,4 +338,90 @@ test('refresh with an empty printer preserves an actionable error through the re
   const inspectAction = canvas.actions.find(action => action.name === 'inspect_for_print');
   await assert.rejects(inspectAction.handler({ ...ctx, input: { revision: 1, target: '' } }),
     error => error instanceof HostCanvasError && error.code === 'printer_required');
+});
+
+test('discovery is deliberate, panel-scoped, bounded and never selects or dispatches automatically', async t => {
+  const directory = await root(t), fixture = fakeHelper(), discoveryCalls = [];
+  fixture.health.supports_printer_discovery = true;
+  const devices = [target, randomUUID()].map(id => ({ id, name: 'Mini Pocket Printer_BLE', rssi: -60 }));
+  let snapshot;
+  const printing = new Printing({ ledger: new PrintLedger(directory), helper: async (method, fields) => {
+    if (!method.includes('discovery')) return fixture.helper(method, fields);
+    discoveryCalls.push({ method, fields });
+    if (method === 'start_discovery') {
+      if (snapshot?.state === 'scanning') throw Object.assign(new Error('Busy'), { code: 'discovery_busy' });
+      snapshot = { scan_id: fields.scan_id.toUpperCase(), state: 'scanning', devices, message: 'INERT scan' };
+    }
+    if (fields.scan_id !== snapshot.scan_id.toLowerCase()) throw Object.assign(new Error('Unknown'), { code: 'unknown_scan' });
+    if (method === 'stop_discovery') snapshot.state = 'stopped';
+    return { discovery: snapshot };
+  } });
+  const editor = new CardEditor({ render: async () => original, printing });
+  await editor.refresh();
+  assert.equal(fixture.calls.length, 0);
+  const before = editor.state().image;
+  await editor.startScan({});
+  assert.equal(editor.selectedPrinter, null);
+  assert.equal(editor.discovery.devices.length, 2);
+  const other = new CardEditor({ render: async () => original, printing });
+  await assert.rejects(other.startScan({}), /Another scan/);
+  await other.close();
+  assert.equal(snapshot.state, 'scanning', 'Closing a rejected second panel cannot stop the first scan');
+  assert.throws(() => editor.selectPrinter({ id: randomUUID() }), /Choose a printer/);
+  editor.selectPrinter({ id: target });
+  assert.equal(editor.selectedPrinter.id, target);
+  assert.equal(editor.prepared, null);
+  assert.deepEqual(await readdir(directory), [], 'Discovery and selection create no print record or job ID');
+  await editor.scanStatus({}, true);
+  await editor.inspectForPrint({ revision: 1, target });
+  const oldApproval = approval(editor);
+  editor.selectPrinter({ id: devices[1].id });
+  await assert.rejects(editor.confirmPrint(oldApproval), /approval/);
+  assert.deepEqual(editor.state().image, before);
+  await editor.startScan({});
+  assert.equal(editor.selectedPrinter, null, 'A new scan never restores or selects a cached device');
+  await editor.close();
+  assert.equal(snapshot.state, 'stopped');
+  assert.equal(fixture.calls.filter(call => call.method === 'submit_png').length, 0);
+});
+
+test('discovery handles older helpers, malformed results and panel close during startup without job access', async t => {
+  const directory = await root(t), fixture = fakeHelper(), ledger = new PrintLedger(directory);
+  const printing = new Printing({ ledger, helper: fixture.helper });
+  await assert.rejects(printing.discovery('start_discovery', randomUUID()), /Update.*helper/);
+  const scanId = randomUUID();
+  const malformed = new Printing({ ledger, helper: async () => ({ discovery: { scan_id: scanId,
+    state: 'stopped', message: 'INERT', devices: Array.from({ length: 33 }, () => ({ id: target, name: 'Mini Pocket Printer_BLE' })) } }) });
+  await assert.rejects(malformed.discovery('discovery_status', scanId), /invalid discovery/);
+  let finish, stopped = 0;
+  const editor = new CardEditor({ render: async () => original, printing: {
+    async discovery(method, id) {
+      if (method === 'start_discovery') await new Promise(resolve => { finish = resolve; });
+      else if (method === 'stop_discovery') stopped++;
+      return { scanId: id, state: method === 'stop_discovery' ? 'stopped' : 'scanning', devices: [], message: 'INERT' };
+    }
+  } });
+  const starting = editor.startScan({});
+  await editor.close();
+  finish();
+  await assert.rejects(starting, /panel closed/);
+  assert.ok(stopped >= 1);
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test('an uncertain scan start preserves its identity for stop and close without retrying start', async () => {
+  const calls = [];
+  const editor = new CardEditor({ render: async () => original, printing: {
+    async discovery(method, scanId) {
+      calls.push({ method, scanId });
+      if (method === 'start_discovery') throw new PreviewError('discovery_failed', 'A scan may still be running; use Stop scan.');
+      return { scanId, state: 'stopped', devices: [], message: 'Stopped' };
+    }
+  } });
+  await assert.rejects(editor.startScan({}), /scan may still be running/);
+  assert.equal(editor.discovery.state, 'error');
+  assert.equal(editor.discovery.scanId, calls[0].scanId);
+  await editor.close();
+  assert.deepEqual(calls.map(call => call.method), ['start_discovery', 'stop_discovery']);
+  assert.equal(calls[0].scanId, calls[1].scanId);
 });

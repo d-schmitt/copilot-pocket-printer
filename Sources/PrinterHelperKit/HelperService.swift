@@ -20,6 +20,7 @@ public final class HelperService {
     private let instance = UUID()
     private let bluetooth: @MainActor () -> String
     private let execute: Executor
+    private let discovery: HelperDiscovery?
     private var job: PrintJob?
     private var work: Task<Void, Never>?
     private var expiry: Task<Void, Never>?
@@ -31,8 +32,9 @@ public final class HelperService {
         return nil
     }
 
-    public init(store: ReceiptStore, bluetooth: @escaping @MainActor () -> String, execute: @escaping Executor) throws {
-        self.store = store; self.bluetooth = bluetooth; self.execute = execute
+    public init(store: ReceiptStore, bluetooth: @escaping @MainActor () -> String,
+                discovery: HelperDiscovery? = nil, execute: @escaping Executor) throws {
+        self.store = store; self.bluetooth = bluetooth; self.discovery = discovery; self.execute = execute
         for var receipt in try store.all() {
             if receipt.state == "awaiting_approval" {
                 receipt.state = "cancelled_before_submission"
@@ -87,7 +89,22 @@ public final class HelperService {
                     confirmation_mode: confirmationMode, confirmation_preference_error: confirmationPreferenceError,
                     message: safetyBlocked ? "Printing blocked. Inspect unresolved receipts and paper; acknowledge only in the helper window after restart if required." :
                         (confirmationMode == .native ? "No BLE access by this status call. Fresh jobs need AI-client approval and a native-window confirmation." :
-                            "No BLE access by this status call. Fresh approved jobs may print immediately. Any same-user program can claim approval; the helper cannot verify a human click.")))
+                            "No BLE access by this status call. Fresh approved jobs may print immediately. Any same-user program can claim approval; the helper cannot verify a human click."),
+                    supports_printer_discovery: discovery != nil, discovery_active: discovery?.running == true))
+            case "start_discovery", "discovery_status", "stop_discovery":
+                guard let discovery, let scanID = request.scan_id else {
+                    throw HelperFailure("discovery_unavailable", "This helper needs printer discovery support and a valid scan ID.")
+                }
+                if request.method == "start_discovery" {
+                    guard active == nil && !safetyBlocked else {
+                        throw HelperFailure("busy", "Finish or resolve the current print job before scanning.")
+                    }
+                    result = HelperResult(discovery: try discovery.start(id: scanID, bluetooth: bluetooth()))
+                } else if request.method == "stop_discovery" {
+                    result = HelperResult(discovery: try discovery.stop(id: scanID))
+                } else {
+                    result = HelperResult(discovery: try discovery.status(id: scanID))
+                }
             case "inspect_png":
                 let (preview, image, _) = try inspect(request.png_base64)
                 result = HelperResult(image: image, preview_png_base64: preview.base64EncodedString())
@@ -161,6 +178,7 @@ public final class HelperService {
         }
         guard !safetyBlocked else { throw HelperFailure("safety_blocked", "Uncertain transfer or storage error. Quit and inspect receipts before considering another explicitly approved job.") }
         guard active == nil else { throw HelperFailure("busy", "One job is already admitted. Nothing was queued.") }
+        guard discovery?.running != true else { throw HelperFailure("discovery_busy", "Stop the printer scan before printing. No job was admitted.") }
         guard bluetooth() == "ready" else {
             throw HelperFailure("bluetooth_\(bluetooth())", "Bluetooth is not ready. Use the helper's explicit permission button and observe macOS; nothing was admitted.")
         }
@@ -243,7 +261,7 @@ public final class HelperService {
         }
     }
 
-    public func close() { closed = true; cancelActive(reason: "Helper closed before approval. No bytes submitted.") }
+    public func close() { closed = true; discovery?.shutdown(); cancelActive(reason: "Helper closed before approval. No bytes submitted.") }
 
     public func acknowledgeUncertainty() {
         guard !closed, !restartRequired, !storageBlocked, active == nil, var receipt = unresolved.first else { return }

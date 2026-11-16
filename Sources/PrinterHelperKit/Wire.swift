@@ -27,11 +27,12 @@ public struct HelperRequest: Decodable {
     public let png_base64: String?
     public let paper_approved: Bool?
     public let expected_confirmation_mode: ConfirmationMode?
+    public let scan_id: UUID?
 
     public static func decode(_ data: Data) throws -> HelperRequest {
         guard data.count <= HelperLimits.frameBytes,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: ["version", "request_id", "method", "job_id", "device_id", "png_base64", "paper_approved", "expected_confirmation_mode"]),
+              Set(object.keys).isSubset(of: ["version", "request_id", "method", "job_id", "device_id", "png_base64", "paper_approved", "expected_confirmation_mode", "scan_id"]),
               let value = try? JSONDecoder().decode(HelperRequest.self, from: data),
               value.version == 1 else {
             throw HelperFailure("invalid_request", "Expected bounded protocol-v1 JSON with a UUID request_id and known fields.")
@@ -42,6 +43,9 @@ public struct HelperRequest: Decodable {
         case "inspect_png": keys = ["version", "request_id", "method", "png_base64"]
         case "submit_png": keys = ["version", "request_id", "method", "job_id", "device_id", "png_base64", "paper_approved"]
         case "job_status", "cancel_job": keys = ["version", "request_id", "method", "job_id"]
+        case "start_discovery", "discovery_status", "stop_discovery":
+            guard value.scan_id != nil else { throw HelperFailure("invalid_request", "Discovery requires a UUID scan_id.") }
+            keys = ["version", "request_id", "method", "scan_id"]
         default: throw HelperFailure("unknown_method", "Unsupported helper method.")
         }
         if value.method == "submit_png", object.keys.contains("expected_confirmation_mode") {
@@ -91,6 +95,8 @@ public struct HelperHealth: Codable, Sendable {
     public let confirmation_preference_error: HelperFailure?
     public let message: String
     public var supports_expected_confirmation_mode: Bool? = true
+    public var supports_printer_discovery: Bool? = false
+    public var discovery_active: Bool? = false
 }
 
 enum HelperJSON {
@@ -121,8 +127,11 @@ public struct HelperResult: Codable, Sendable {
     public var image: ImageInspection?
     public var receipt: JobReceipt?
     public var preview_png_base64: String?
-    public init(health: HelperHealth? = nil, image: ImageInspection? = nil, receipt: JobReceipt? = nil, preview_png_base64: String? = nil) {
+    public var discovery: DiscoverySnapshot?
+    public init(health: HelperHealth? = nil, image: ImageInspection? = nil, receipt: JobReceipt? = nil, preview_png_base64: String? = nil,
+                discovery: DiscoverySnapshot? = nil) {
         self.health = health; self.image = image; self.receipt = receipt; self.preview_png_base64 = preview_png_base64
+        self.discovery = discovery
     }
 }
 

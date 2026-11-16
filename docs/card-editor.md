@@ -24,6 +24,36 @@ After separately approving repository-extension activation, reload the
 with empty input. Its SDK actions mirror the editor's draft operations.
 The existing read-only PNG preview remains a separate canvas.
 
+### Available in every Copilot chat
+
+The project-scoped extension appears only in sessions for this repository.
+For a standalone user-local copy, stage and verify first:
+
+```sh
+python3 scripts/install_canvas.py
+```
+
+After approving user-wide availability, install with:
+
+```sh
+python3 scripts/install_canvas.py --install
+```
+
+This copies the extension, assets, a standalone renderer and the IPC client into
+`~/.copilot/extensions/pocket-printer-preview/` (or `$COPILOT_HOME/extensions/`
+when configured). The installed copy has no executable, import or symlink back
+to the checkout. It is not updated merely by editing repository source.
+Unrecognized destinations or local user modifications are not overwritten.
+
+Preserve unsaved drafts before reloading extensions in the destination chat.
+Choose **Pocket Card Editor** from the canvas menu. The provider is
+`user:pocket-printer-preview`; the canvas IDs remain `pocket-printer-editor`
+and `pocket-printer-preview`. In this repository, the same-name project extension
+shadows the user copy, so there is no duplicate provider in that session.
+Both scopes use the same private draft and print-intent stores, preserving
+cross-process duplicate protection rather than creating a second print history.
+Installing availability never launches the helper, scans, or prints.
+
 ## Private drafts
 
 Save and Save a copy explicitly store drafts under
@@ -65,9 +95,27 @@ and authorize the helper independently using its existing setup. The helper
 must advertise the atomic confirmation-mode guard; an older helper fails
 closed with an upgrade message instead of falling back to an unsafe dispatch.
 
-Enter the explicit printer UUID established by the existing approved native
-setup. The exact print preview is prepared automatically after settled edits;
-opening a fresh panel with no selected target does not contact the helper.
+Choose **Scan for printers**, then select a result from the **Printer** list.
+The native helper scans compatible advertisements for up to 10 seconds, with a
+**Stop scan** control and visible permission, unavailable and failure states.
+The first device is never selected automatically. Names, distinguishing ID
+suffixes and signal readings help distinguish duplicate names; IDs remain
+internal rather than requiring manual entry. Results and selection are panel-only.
+There is no remembered-printer preference in this increment.
+
+Discovery reuses the native printer transport, not Web Bluetooth. Only the known
+`Mini Pocket Printer_BLE` advertisement is listed; this is not a list of every
+macOS Bluetooth device or proof of a verified printer profile. The helper must
+already be open and authorized with its native Bluetooth control. Discovery
+never connects, sends commands, or prints. Scanning and print admission are
+serialized; stopping does not release that guard until scanner cleanup finishes.
+Closing the panel requests scan cancellation, and the native deadline also
+bounds abandoned scans. Older helpers report that a separately approved update
+is needed for discovery; the canvas does not silently reinstall or launch one.
+
+After scanning stops and a printer is selected, the exact print preview is
+prepared automatically after settled edits. Opening a fresh panel does not
+contact the helper.
 Use **Refresh print preview** after resolving an inspection error. Review the helper-produced bitmap,
 target, revision, original-image digest, confirmation mode and estimated paper
 length. The original renderer PNG and helper bitmap remain distinct.

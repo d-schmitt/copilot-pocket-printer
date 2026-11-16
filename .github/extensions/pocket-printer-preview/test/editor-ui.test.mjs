@@ -27,7 +27,7 @@ async function browser(initial, request) {
     document: { querySelector: $, createElement: () => new Element(), querySelectorAll: () => [] },
     window: { addEventListener: (name, callback) => listeners.set(name, callback) },
     fetch: async (route, options) => {
-      if (request && options) state = await request(route, JSON.parse(options.body), state);
+      if (request && options?.method === 'POST') state = await request(route, JSON.parse(options.body), state);
       return { ok: true, json: async () => route === 'list_drafts' ? [] : structuredClone(state) };
     },
     structuredClone, setInterval: callback => { intervals.push(callback); return intervals.length; },
@@ -35,6 +35,7 @@ async function browser(initial, request) {
     setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout: id => timers.delete(id)
   });
+
   return { $, intervals, cleared, listeners, state: value => { state = value; }, async tick() {
     // Let pending mutation responses schedule their preview, then advance one debounce at a time.
     await new Promise(resolve => setImmediate(resolve));
@@ -42,6 +43,32 @@ async function browser(initial, request) {
     if (timer) { timers.delete(timer[0]); await timer[1](); }
   } };
 }
+
+test('failed scan operations resync server state so the picker can recover without reopening', async () => {
+  for (const failedRoute of ['start_scan', 'scan_status', 'stop_scan']) {
+    const initial = { draft: exampleDraft(), revision: 1, renderedRevision: null, saved: null,
+      image: null, printingAvailable: true, error: null,
+      discovery: { state: 'idle', devices: [], message: 'Choose Scan' } };
+    const calls = [];
+    const ui = await browser(initial, async (route, input, state) => {
+      calls.push(route);
+      if (route === failedRoute) {
+        ui.state({ ...state, error: { message: 'Scan unavailable' },
+          discovery: { scanId: 'owned-scan', state: 'error', devices: [], message: 'Try again explicitly' } });
+        throw new Error('Scan unavailable');
+      }
+      assert.equal(route, 'start_scan');
+      return { ...state, discovery: { scanId: 'owned-scan', state: 'scanning', devices: [], message: 'Scanning' } };
+    });
+    await ui.$('#scan').events.get('click')();
+    if (failedRoute === 'scan_status') await ui.intervals[0]();
+    if (failedRoute === 'stop_scan') await ui.$('#stop-scan').events.get('click')();
+    assert.equal(ui.$('#scan').disabled, false, `${failedRoute} must not leave the browser stuck scanning`);
+    assert.equal(ui.$('#stop-scan').disabled, false, 'An uncertain accepted scan can still be stopped');
+    assert.match(ui.$('#error').textContent, /Scan unavailable/);
+    assert.equal(calls.filter(route => route === 'start_scan').length, 1, 'Recovery never starts or retries a scan');
+  }
+});
 
 test('browser starts one poll on load and refreshes recovered state without opening saved drafts', async () => {
   let state = { draft: exampleDraft(), revision: 1, renderedRevision: null, saved: null, image: null,
@@ -73,11 +100,15 @@ test('browser starts one poll on load and refreshes recovered state without open
 test('selecting a target and editing only prepare previews; one trusted Print click dispatches once', async () => {
   const calls = [];
   let inspection = 0;
+  const device = { id: '11111111-2222-4333-8444-555555555555', name: 'Mini Pocket Printer_BLE', rssi: -60 };
   const initial = { draft: exampleDraft(), revision: 1, renderedRevision: 1, saved: null,
     image: { width: 384, height: 100, estimatedPaperMm: 22.5 }, printingAvailable: true, error: null };
   const ui = await browser(initial, async (route, input, state) => {
     calls.push({ route, input });
-    if (route === 'invalidate_print') return { ...state, prepared: null };
+    if (route === 'start_scan') return { ...state, prepared: null, selectedPrinter: null,
+      discovery: { state: 'scanning', scanId: 'scan', devices: [device], message: 'Scanning' } };
+    if (route === 'scan_status') return { ...state, discovery: { ...state.discovery, state: 'stopped', message: 'Scan complete' } };
+    if (route === 'select_printer') return { ...state, prepared: null, selectedPrinter: device };
     if (route === 'update_draft') return { ...state, draft: input.draft, revision: state.revision + 1,
       renderedRevision: state.revision + 1, prepared: null };
     if (route === 'inspect_for_print') return { ...state, prepared: {
@@ -95,8 +126,14 @@ test('selecting a target and editing only prepare previews; one trusted Print cl
   await $('#inspect').events.get('click')();
   assert.match($('#error').textContent, /Select a printer/);
   assert.equal(calls.length, 0, 'Refresh with no selected printer stays local and actionable');
-  $('#target').value = '11111111-2222-4333-8444-555555555555';
-  $('#target').events.get('input')();
+  await $('#scan').events.get('click')();
+  assert.equal($('#target').value, '', 'Discovery must not select the first device');
+  assert.equal(calls.filter(call => call.route === 'inspect_for_print').length, 0);
+  $('#target').value = device.id;
+  await $('#target').events.get('change')();
+  await ui.tick();
+  assert.equal(calls.filter(call => call.route === 'inspect_for_print').length, 0, 'Wait for scan cleanup before preparing printing');
+  await ui.intervals[0]();
   await ui.tick();
   assert.equal(calls.filter(call => call.route === 'inspect_for_print').length, 1);
   assert.equal($('#confirm').disabled, true, 'Wait for exact bitmap decode');

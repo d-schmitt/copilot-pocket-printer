@@ -104,6 +104,30 @@ public final class PrinterClient {
         """
     }
 
+    public func scanPrinters(onChange: @escaping @MainActor ([DiscoveredPrinter]) -> Void) async throws {
+        try begin()
+        defer { cancel() }
+        let startupDeadline = now + timing.startup
+        while !link.bluetoothReady {
+            try check()
+            guard now < startupDeadline else { throw CLIError.bluetoothUnavailable("Controller startup timed out.") }
+            try await pause()
+        }
+        try check()
+        link.startScan()
+        let deadline = now + timing.discovery
+        var previous: [DiscoveredPrinter] = []
+        while now < deadline {
+            try check()
+            let devices = link.devices.filter { $0.name == PrinterSelection.advertisedName }
+                .sorted { $0.id.uuidString < $1.id.uuidString }.prefix(32).map {
+                    DiscoveredPrinter(id: $0.id, name: $0.name, rssi: (-127...20).contains($0.rssi) ? $0.rssi : nil)
+                }
+            if devices != previous { onChange(devices); previous = devices }
+            try await pause()
+        }
+    }
+
     private func begin() throws {
         guard !used else { throw CLIError.invalidInput("A printer client is single-use; no reconnect or retry.") }
         used = true

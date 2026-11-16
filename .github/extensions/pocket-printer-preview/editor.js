@@ -3,6 +3,7 @@ const labels = { heading: 'Name & title', day: 'Day & daylight', walk: 'Walk', m
 let state, draft, pending = false, sending = false, synced = true, timer, dragId;
 let inspectedId = null, decodedId = null, confirming = false, lastJobId = null, inspecting = false;
 let previewTimer, attemptedInspectionKey = null;
+let selecting = false, scanRequest = false, deviceList = '';
 const targetPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 function error(message) { $('#error').textContent = message; $('#error').hidden = !message; }
@@ -11,6 +12,19 @@ async function post(name, input) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.message ?? 'Editor request failed.');
   return result;
+}
+async function resyncAfterFailure(failure) {
+  try {
+    const response = await fetch('state', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Editor connection unavailable.');
+    const latest = await response.json();
+    const changed = latest.revision !== state.revision;
+    setState(latest);
+    if (changed && !pending && !sending && synced) { draft = structuredClone(latest.draft); drawSections(); }
+    error(failure.message);
+  } catch (recoveryFailure) {
+    error(`${failure.message} Could not refresh editor state: ${recoveryFailure.message}`);
+  }
 }
 function setState(value) {
   state = value;
@@ -143,12 +157,14 @@ function canConfirm() {
   return prepared && !prepared.claimed && prepared.approvalToken && decodedId === prepared.inspectionId &&
     prepared.target === $('#target').value.trim().toLowerCase() && prepared.revision === state.revision &&
     state.renderedRevision === state.revision && !pending && !sending && synced && !confirming && !inspecting &&
+    !selecting && !scanRequest && !scanActive() &&
     prepared.health.bluetooth === 'ready' && !prepared.health.safety_blocked && !prepared.health.active_job_id &&
     !prepared.health.confirmation_preference_error;
 }
 function drawPrinting() {
   $('#printing').hidden = !state.printingAvailable;
   if (!state.printingAvailable) return;
+  drawDiscovery();
   const prepared = state.prepared;
   if (!prepared || pending || !synced) clearApproval();
   else {
@@ -166,7 +182,7 @@ function drawPrinting() {
       $('#print-image').replaceChildren(bitmap);
     }
     $('#helper-state').textContent = `Helper: ${prepared.health.bluetooth}; confirmation mode: ${prepared.mode}. Estimated paper: ${prepared.estimatedPaperMm.toFixed(1)} mm.`;
-    $('#print-binding').textContent = `Printer ${prepared.target} | Draft revision ${prepared.revision} | Original SHA-256 ${prepared.digest} | Job ${prepared.jobId}`;
+    $('#print-binding').textContent = `Printer ${state.selectedPrinter?.name ?? 'selected device'} (${prepared.target.slice(-8)}) | Draft revision ${prepared.revision} | Original SHA-256 ${prepared.digest} | Job ${prepared.jobId}`;
     $('#print-ready').textContent = prepared.claimed ? 'Already sent or claimed. Check its status; this job will not print again.' :
       prepared.mode === 'ai_client' ? 'Ready when the exact bitmap has loaded. One Print click sends this card.' :
         'Native confirmation is on. Print will also require approval in the helper.';
@@ -180,26 +196,66 @@ function drawPrinting() {
   $('#confirm').disabled = !canConfirm();
   $('#status').disabled = !lastJobId || confirming;
 }
-$('#target').addEventListener('input', () => {
+function scanActive() { return ['scanning', 'stopping'].includes(state?.discovery?.state); }
+function drawDiscovery() {
+  const discovery = state.discovery ?? { state: 'idle', devices: [], message: 'Choose Scan for printers.' };
+  const list = JSON.stringify(discovery.devices);
+  if (list !== deviceList) {
+    deviceList = list;
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = 'Select a discovered printer';
+    $('#target').replaceChildren(placeholder);
+    for (const device of discovery.devices) {
+      let suffix = 8;
+      while (suffix < 36 && discovery.devices.some(other => other.id !== device.id && other.id.slice(-suffix) === device.id.slice(-suffix))) suffix += 4;
+      const option = document.createElement('option'); option.value = device.id;
+      option.textContent = `${device.name} (${device.id.slice(-suffix)}, ${device.rssi === null ? 'signal unknown' : `${device.rssi} dBm`})`;
+      $('#target').append(option);
+    }
+  }
+  if (!selecting) $('#target').value = state.selectedPrinter?.id ?? '';
+  $('#target').disabled = selecting || confirming || scanRequest || discovery.devices.length === 0;
+  $('#scan-status').textContent = `${discovery.state}: ${discovery.message}`;
+  $('#scan').disabled = scanRequest || confirming || scanActive();
+  $('#stop-scan').disabled = scanRequest || confirming || !state.discovery?.scanId ||
+    !['scanning', 'stopping', 'error'].includes(discovery.state);
+  $('#inspect').disabled = inspecting || confirming || selecting || scanRequest || scanActive() || !$('#target').value;
+}
+async function scanOperation(name) {
+  if (scanRequest || confirming) return;
+  scanRequest = true;
+  if (name === 'start_scan') { clearApproval(); state.prepared = null; attemptedInspectionKey = null; }
+  drawDiscovery();
+  try { setState(await post(name, {})); }
+  catch (failure) { await resyncAfterFailure(failure); }
+  finally { scanRequest = false; drawDiscovery(); queueInspection(); }
+}
+$('#scan').addEventListener('click', () => scanOperation('start_scan'));
+$('#stop-scan').addEventListener('click', () => scanOperation('stop_scan'));
+$('#target').addEventListener('change', async () => {
   clearApproval();
   attemptedInspectionKey = null;
+  selecting = true;
   if (state) {
     state.prepared = null;
-    void post('invalidate_print', {}).then(queueInspection).catch(failure => error(failure.message));
+    try { setState(await post('select_printer', { id: $('#target').value })); }
+    catch (failure) { error(failure.message); }
+    finally { selecting = false; drawDiscovery(); queueInspection(); }
   }
 });
 function queueInspection() {
   clearTimeout(previewTimer);
   const target = $('#target').value?.trim().toLowerCase();
   if (!state?.printingAvailable || !targetPattern.test(target ?? '') || pending || sending || !synced ||
-      confirming || inspecting || state.renderedRevision !== state.revision || !state.image ||
+      confirming || inspecting || selecting || scanRequest || scanActive() ||
+      state.renderedRevision !== state.revision || !state.image ||
       (state.prepared?.revision === state.revision && state.prepared.target === target) ||
       attemptedInspectionKey === `${state.revision}:${target}`) return;
   $('#print-ready').textContent = 'Preparing exact printer preview...';
   previewTimer = setTimeout(() => inspectForPrinting(), 500);
 }
 async function inspectForPrinting() {
-  if (inspecting || confirming) return;
+  if (inspecting || confirming || selecting || scanRequest || scanActive()) return;
   if (!targetPattern.test($('#target').value?.trim().toLowerCase() ?? '')) {
     error('Select a printer before refreshing the print preview.');
     return;
@@ -218,7 +274,7 @@ async function inspectForPrinting() {
     error(failure.message);
     $('#print-ready').textContent = 'Print preview unavailable. Resolve the error, then refresh it.';
   } finally {
-    inspecting = false; $('#inspect').disabled = false;
+    inspecting = false; drawDiscovery();
     $('#confirm').disabled = !canConfirm();
     queueInspection();
   }
@@ -240,7 +296,6 @@ $('#confirm').addEventListener('click', async event => {
     error(`${failure.message} Do not retry. Check the original job status.`);
   } finally {
     confirming = false;
-    $('#target').disabled = false; $('#inspect').disabled = false;
     drawSections(); drawPrinting();
   }
 });
@@ -308,17 +363,23 @@ let poll;
 async function pollState() {
   if (!state || pending || sending || !synced || confirming || inspecting) return;
   try {
-    const response = await fetch('state', { cache: 'no-store' });
-    if (!response.ok) throw new Error('Editor connection unavailable.');
-    const latest = await response.json();
-    if (pending || sending || !synced || confirming || inspecting) return;
+    let latest;
+    if (scanActive() && !scanRequest) latest = await post('scan_status', {});
+    else {
+      const response = await fetch('state', { cache: 'no-store' });
+      if (!response.ok) throw new Error('Editor connection unavailable.');
+      latest = await response.json();
+    }
+    if (pending || sending || !synced || confirming || inspecting || selecting || scanRequest) return;
     if (latest.revision !== state.revision) {
       setState(latest); draft = structuredClone(latest.draft); drawSections();
     } else if (latest.renderedRevision !== state.renderedRevision || latest.image?.sha256 !== state.image?.sha256 ||
         latest.prepared?.inspectionId !== state.prepared?.inspectionId ||
+        JSON.stringify(latest.discovery) !== JSON.stringify(state.discovery) ||
+        latest.selectedPrinter?.id !== state.selectedPrinter?.id ||
         JSON.stringify(latest.job) !== JSON.stringify(state.job) ||
         JSON.stringify(latest.error) !== JSON.stringify(state.error)) setState(latest);
-  } catch (failure) { error(failure.message); }
+  } catch (failure) { await resyncAfterFailure(failure); }
 }
 function startPolling() { if (poll === undefined) poll = setInterval(pollState, 1000); }
 startPolling();
