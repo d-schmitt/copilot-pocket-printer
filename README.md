@@ -26,10 +26,17 @@ no per-print helper click after explicit native opt-in.
 The [JSON-to-PNG renderer and daily-card example](docs/daily-card.md) also work
 from the CLI, with optional weather, times-only calendar input, walk suggestions,
 and joke, Sudoku, or line-art content. Rendering needs no helper or printer.
-Rendering through MCP, automatic calendar acquisition, canvas controls, and
+An optional [read-only Copilot canvas](docs/canvas-preview.md) previews the
+bundled synthetic card or an explicitly selected local PNG without a helper
+or printer. Activate this repository extension only after separate approval.
+Rendering through MCP, automatic calendar acquisition, editable canvas controls, and
 scheduled delivery remain [roadmap work](#what-this-showcases), not steps needed below.
 
 ## Try the demo
+
+For the smallest, paper-free increment, start with the
+[read-only canvas setup and demo](docs/canvas-preview.md). The steps below
+are the separate physical-printing demo.
 
 You need **macOS 13+, a working Swift toolchain, Python 3, and Node 22+**, a
 reviewed checkout of current `main`, and the supported printer with paper,
@@ -120,7 +127,7 @@ paper output; inspect the paper yourself.
 | Sessions | Isolated implementation work | Used to develop this demo |
 | MCP | Client-neutral PNG preview and approved printing | Available; [rendering through MCP planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/7) |
 | WorkIQ | Optional calendar context | [Timing-input adapter available](docs/daily-card.md#privacy-boundary); [automatic acquisition planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9) |
-| Canvas | Interactive preview and section controls | [Planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/8) |
+| Canvas | Exact local PNG preview, no printer access | [Read-only increment](docs/canvas-preview.md); [section controls planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/8) |
 | Automation | Scheduled card delivery | [Planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9); needs an awake Mac and available printer |
 
 These are distinct capabilities, not a claim that all were new or generally

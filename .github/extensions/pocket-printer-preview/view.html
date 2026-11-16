@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocket Printer Preview</title>
+  <link rel="stylesheet" href="view.css">
+  <script src="view.js" type="module"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">READ-ONLY PREVIEW</span>
+      <h1>Pocket Printer</h1>
+      <p>Preview an existing card without connecting to a printer.</p>
+    </header>
+    <section class="controls" aria-label="Choose preview">
+      <label for="file">Replace with a local PNG</label>
+      <input id="file" type="file" accept="image/png,.png">
+      <p class="hint">384 pixels wide, 1-4096 pixels tall, up to 1 MiB.</p>
+    </section>
+    <p id="error" role="alert" hidden></p>
+    <section class="details" aria-label="Image details" aria-live="polite">
+      <strong id="source">Loading synthetic sample...</strong>
+      <div id="dimensions"></div>
+      <div id="paper"></div>
+      <p class="hint">Estimate includes 80 clearance dots at nominal 203 dpi.
+        No paper is used. This is the original PNG, not a helper-converted printer bitmap.</p>
+    </section>
+    <div class="paper-window" tabindex="0" role="region" aria-label="Original PNG at one image pixel per CSS pixel, scroll if needed">
+      <img id="preview" src="image.png" alt="Exact supplied card image" width="384">
+    </div>
+    <footer>
+      <p>100% display &middot; 1 image pixel = 1 CSS pixel. Scroll to see larger cards.</p>
+      <p>Preview stays only in this panel. Closing the panel or reloading the extension
+        discards the selected image. No helper, Bluetooth, printing or saved image history.</p>
+    </footer>
+  </main>
+</body>
+</html>
