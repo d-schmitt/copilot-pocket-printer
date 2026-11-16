@@ -1,7 +1,8 @@
 const $ = selector => document.querySelector(selector);
 const labels = { heading: 'Name & title', day: 'Day & daylight', walk: 'Walk', meetings: 'Meetings', bottom: 'Joke / Sudoku / art' };
 let state, draft, pending = false, sending = false, synced = true, timer, dragId;
-let inspectedId = null, decodedId = null, confirming = false, lastJobId = null, inspecting = false;
+let previewKey = null, decodedId = null, confirming = false, lastJobId = null, inspecting = false;
+let previewGeneration = 0;
 let previewTimer, attemptedInspectionKey = null;
 let selecting = false, scanRequest = false, deviceList = '';
 const targetPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -14,10 +15,12 @@ async function post(name, input) {
   return result;
 }
 async function resyncAfterFailure(failure) {
+  const generation = previewGeneration;
   try {
     const response = await fetch('state', { cache: 'no-store' });
     if (!response.ok) throw new Error('Editor connection unavailable.');
     const latest = await response.json();
+    if (generation !== previewGeneration || latest.revision < state.revision) return;
     const changed = latest.revision !== state.revision;
     setState(latest);
     if (changed && !pending && !sending && synced) { draft = structuredClone(latest.draft); drawSections(); }
@@ -28,14 +31,6 @@ async function resyncAfterFailure(failure) {
 }
 function setState(value) {
   state = value;
-  $('#render-status').textContent = pending ? 'Unsaved changes; updating preview...' :
-    value.renderedRevision === value.revision ? 'Preview matches this draft' : 'Current draft has no printable preview';
-  const valid = !pending && value.image && value.renderedRevision === value.revision;
-  $('#card').hidden = !valid;
-  if (valid) {
-    $('#card').src = `image.png?revision=${value.revision}`;
-    $('#metadata').textContent = `${value.image.width} x ${value.image.height} pixels | Estimated paper: ${value.image.estimatedPaperMm.toFixed(1)} mm`;
-  } else $('#metadata').textContent = '';
   $('#save-status').textContent = value.saved ? 'Saved draft open; Save to keep further edits' : 'Unsaved example';
   error(value.error?.message ?? '');
   drawPrinting();
@@ -120,12 +115,13 @@ function drawSections() {
   });
 }
 function changed() {
+  previewGeneration++;
   synced = false;
   pending = true;
   $('#card').hidden = true;
-  $('#render-status').textContent = 'Updating draft...';
   $('#metadata').textContent = '';
   clearApproval();
+  $('#render-status').textContent = 'Updating draft...';
   clearTimeout(timer);
   timer = setTimeout(flush, 300);
 }
@@ -140,7 +136,11 @@ async function flush() {
     error(failure.message);
     // Refresh only server metadata; never overwrite unsent field values.
     try { state = await (await fetch('state')).json(); } catch { error('Editor connection unavailable.'); }
-  } finally { sending = false; if (pending) void flush(); else queueInspection(); }
+  } finally {
+    sending = false;
+    drawPrinting();
+    if (pending) void flush(); else queueInspection();
+  }
 }
 async function stable() {
   clearTimeout(timer);
@@ -148,13 +148,62 @@ async function stable() {
   if (sending || pending || !synced) throw new Error('Finish or correct the current edit before continuing.');
 }
 function clearApproval() {
+  previewKey = null;
   decodedId = null;
+  $('#card').hidden = true;
+  $('#metadata').textContent = '';
+  $('#render-status').textContent = 'Preview not ready for printing.';
   $('#confirm').disabled = true;
   $('#approval').hidden = true;
 }
-function canConfirm() {
+function currentPrepared() {
   const prepared = state?.prepared;
+  return prepared && state.printingAvailable && !pending && !sending && synced &&
+    state.image && state.renderedRevision === state.revision && prepared.revision === state.revision &&
+    prepared.target === state.selectedPrinter?.id &&
+    prepared.target === $('#target').value.trim().toLowerCase() ? prepared : null;
+}
+function drawPreview() {
+  if (pending || sending || !synced || !state.image || state.renderedRevision !== state.revision) {
+    clearApproval();
+    $('#render-status').textContent = pending || sending ? 'Updating draft...' : 'Current draft has no valid preview.';
+    return;
+  }
+  const prepared = currentPrepared();
+  const key = prepared ? `print-preview.png?inspection=${prepared.inspectionId}` : `image.png?revision=${state.revision}`;
+  if (previewKey === key) return;
+  previewKey = key; decodedId = null;
+  const bitmap = document.createElement('img');
+  bitmap.id = 'card'; bitmap.width = 384; bitmap.hidden = true;
+  bitmap.alt = prepared ? 'Exact helper-produced printer bitmap' : 'Rendered draft; not prepared for printing';
+  $('#render-status').textContent = prepared ? 'Loading exact printable bitmap...' : 'Loading draft preview...';
+  $('#metadata').textContent = '';
+  // A fresh element binds load/error events to this source, never to a replacement revision.
+  const current = () => $('#card') === bitmap && previewKey === key &&
+    !pending && !sending && synced && (!prepared || currentPrepared()?.inspectionId === prepared.inspectionId);
+  bitmap.addEventListener('load', () => {
+    if (!current()) return;
+    bitmap.hidden = false;
+    decodedId = prepared?.inspectionId ?? null;
+    $('#render-status').textContent = prepared ? 'Exact printable bitmap for this draft and printer' :
+      state.printingAvailable ? 'Draft preview only; exact printable bitmap is not ready' : 'Preview matches this draft';
+    const paper = prepared?.estimatedPaperMm ?? state.image.estimatedPaperMm;
+    $('#metadata').textContent = `${bitmap.naturalWidth} x ${bitmap.naturalHeight} pixels | Estimated paper: ${paper.toFixed(1)} mm`;
+    $('#confirm').disabled = !canConfirm();
+  });
+  bitmap.addEventListener('error', () => {
+    if (!current()) return;
+    bitmap.hidden = true; decodedId = null; $('#confirm').disabled = true;
+    $('#render-status').textContent = 'Preview could not be displayed; printing is disabled.';
+    error('Preview could not be displayed. Refresh the print preview or edit again.');
+  });
+  $('#card-preview').replaceChildren(bitmap);
+  bitmap.src = key;
+}
+function canConfirm() {
+  const prepared = currentPrepared();
   return prepared && !prepared.claimed && prepared.approvalToken && decodedId === prepared.inspectionId &&
+    !$('#card').hidden && previewKey === `print-preview.png?inspection=${prepared.inspectionId}` &&
     prepared.target === $('#target').value.trim().toLowerCase() && prepared.revision === state.revision &&
     state.renderedRevision === state.revision && !pending && !sending && synced && !confirming && !inspecting &&
     !selecting && !scanRequest && !scanActive() &&
@@ -163,24 +212,18 @@ function canConfirm() {
 }
 function drawPrinting() {
   $('#printing').hidden = !state.printingAvailable;
-  if (!state.printingAvailable) return;
+  if (!state.printingAvailable) { drawPreview(); return; }
   drawDiscovery();
-  const prepared = state.prepared;
-  if (!prepared || pending || !synced) clearApproval();
+  const prepared = currentPrepared();
+  if (!prepared) {
+    $('#approval').hidden = true;
+    $('#print-ready').textContent = inspecting ? 'Preparing exact printer preview...' :
+      attemptedInspectionKey === `${state.revision}:${$('#target').value}` ?
+        'Print preview unavailable. Resolve the error, then refresh it.' :
+        'Scan and select your printer. The exact print preview will update automatically.';
+  }
   else {
     $('#approval').hidden = false;
-    if (inspectedId !== prepared.inspectionId) {
-      inspectedId = prepared.inspectionId; decodedId = null;
-      const bitmap = document.createElement('img'); bitmap.width = 384; bitmap.alt = 'Exact helper-produced printer bitmap';
-      bitmap.addEventListener('load', () => {
-        if (state.prepared?.inspectionId === prepared.inspectionId) {
-          decodedId = prepared.inspectionId; $('#confirm').disabled = !canConfirm();
-        }
-      });
-      bitmap.addEventListener('error', () => { decodedId = null; $('#confirm').disabled = true; error('Exact printer bitmap could not be displayed. Do not print.'); });
-      bitmap.src = `print-preview.png?inspection=${prepared.inspectionId}`;
-      $('#print-image').replaceChildren(bitmap);
-    }
     $('#helper-state').textContent = `Helper: ${prepared.health.bluetooth}; confirmation mode: ${prepared.mode}. Estimated paper: ${prepared.estimatedPaperMm.toFixed(1)} mm.`;
     $('#print-binding').textContent = `Printer ${state.selectedPrinter?.name ?? 'selected device'} (${prepared.target.slice(-8)}) | Draft revision ${prepared.revision} | Original SHA-256 ${prepared.digest} | Job ${prepared.jobId}`;
     $('#print-ready').textContent = prepared.claimed ? 'Already sent or claimed. Check its status; this job will not print again.' :
@@ -189,6 +232,7 @@ function drawPrinting() {
     if (prepared.claimed) $('#helper-state').textContent += ' This intent is already claimed. Status only; no replay.';
     lastJobId = prepared.intent?.jobId ?? prepared.jobId;
   }
+  drawPreview();
   if (state.job) {
     lastJobId = state.job.jobId;
     $('#job-status').textContent = `${state.job.state}: ${state.job.message ?? ''} Paper output is not confirmed by transport submission.`;
@@ -224,7 +268,7 @@ function drawDiscovery() {
 async function scanOperation(name) {
   if (scanRequest || confirming) return;
   scanRequest = true;
-  if (name === 'start_scan') { clearApproval(); state.prepared = null; attemptedInspectionKey = null; }
+  if (name === 'start_scan') { previewGeneration++; clearApproval(); state.prepared = null; attemptedInspectionKey = null; }
   drawDiscovery();
   try { setState(await post(name, {})); }
   catch (failure) { await resyncAfterFailure(failure); }
@@ -233,6 +277,7 @@ async function scanOperation(name) {
 $('#scan').addEventListener('click', () => scanOperation('start_scan'));
 $('#stop-scan').addEventListener('click', () => scanOperation('stop_scan'));
 $('#target').addEventListener('change', async () => {
+  previewGeneration++;
   clearApproval();
   attemptedInspectionKey = null;
   selecting = true;
@@ -240,7 +285,7 @@ $('#target').addEventListener('change', async () => {
     state.prepared = null;
     try { setState(await post('select_printer', { id: $('#target').value })); }
     catch (failure) { error(failure.message); }
-    finally { selecting = false; drawDiscovery(); queueInspection(); }
+    finally { selecting = false; drawPrinting(); queueInspection(); }
   }
 });
 function queueInspection() {
@@ -260,13 +305,17 @@ async function inspectForPrinting() {
     error('Select a printer before refreshing the print preview.');
     return;
   }
+  previewGeneration++;
   inspecting = true; clearApproval(); $('#inspect').disabled = true;
+  state.prepared = null;
   try {
     await stable();
     const target = $('#target').value.trim().toLowerCase();
-    attemptedInspectionKey = `${state.revision}:${target}`;
-    const result = await post('inspect_for_print', { revision: state.revision, target });
-    if (target !== $('#target').value.trim().toLowerCase() || pending || sending || !synced) {
+    const revision = state.revision, generation = previewGeneration;
+    attemptedInspectionKey = `${revision}:${target}`;
+    const result = await post('inspect_for_print', { revision, target });
+    if (generation !== previewGeneration || revision !== state.revision || result.revision !== revision ||
+        target !== $('#target').value.trim().toLowerCase() || pending || sending || !synced) {
       await post('invalidate_print', {}); throw new Error('Draft or target changed. Inspect again.');
     }
     setState(result);
@@ -274,8 +323,7 @@ async function inspectForPrinting() {
     error(failure.message);
     $('#print-ready').textContent = 'Print preview unavailable. Resolve the error, then refresh it.';
   } finally {
-    inspecting = false; drawDiscovery();
-    $('#confirm').disabled = !canConfirm();
+    inspecting = false; drawPrinting();
     queueInspection();
   }
 }
@@ -349,11 +397,11 @@ $('#browse').addEventListener('click', async () => {
 $('#open').addEventListener('click', async () => {
   try {
     await stable();
+    previewGeneration++; clearApproval();
     setState(await post('open_draft', { revision: state.revision, id: $('#draft-choice').value }));
     draft = structuredClone(state.draft); drawSections(); $('#saved-drafts').hidden = true;
   } catch (failure) { error(failure.message); }
 });
-$('#card').addEventListener('error', () => { $('#card').hidden = true; error('Preview could not be displayed. Edit again or reopen the panel.'); });
 try {
   const response = await fetch('state');
   if (!response.ok) throw new Error('Editor unavailable.');
@@ -362,6 +410,7 @@ try {
 let poll;
 async function pollState() {
   if (!state || pending || sending || !synced || confirming || inspecting) return;
+  const generation = previewGeneration;
   try {
     let latest;
     if (scanActive() && !scanRequest) latest = await post('scan_status', {});
@@ -370,7 +419,8 @@ async function pollState() {
       if (!response.ok) throw new Error('Editor connection unavailable.');
       latest = await response.json();
     }
-    if (pending || sending || !synced || confirming || inspecting || selecting || scanRequest) return;
+    if (generation !== previewGeneration || latest.revision < state.revision ||
+        pending || sending || !synced || confirming || inspecting || selecting || scanRequest) return;
     if (latest.revision !== state.revision) {
       setState(latest); draft = structuredClone(latest.draft); drawSections();
     } else if (latest.renderedRevision !== state.renderedRevision || latest.image?.sha256 !== state.image?.sha256 ||
