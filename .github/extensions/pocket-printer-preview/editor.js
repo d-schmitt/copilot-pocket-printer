@@ -2,6 +2,8 @@ const $ = selector => document.querySelector(selector);
 const labels = { heading: 'Name & title', day: 'Day & daylight', walk: 'Walk', meetings: 'Meetings', bottom: 'Joke / Sudoku / art' };
 let state, draft, pending = false, sending = false, synced = true, timer, dragId;
 let inspectedId = null, decodedId = null, confirming = false, lastJobId = null, inspecting = false;
+let previewTimer, attemptedInspectionKey = null;
+const targetPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 function error(message) { $('#error').textContent = message; $('#error').hidden = !message; }
 async function post(name, input) {
@@ -23,6 +25,7 @@ function setState(value) {
   $('#save-status').textContent = value.saved ? 'Saved draft open; Save to keep further edits' : 'Unsaved example';
   error(value.error?.message ?? '');
   drawPrinting();
+  queueInspection();
 }
 function field(key, label, multiline = false) {
   const wrapper = document.createElement('div');
@@ -123,7 +126,7 @@ async function flush() {
     error(failure.message);
     // Refresh only server metadata; never overwrite unsent field values.
     try { state = await (await fetch('state')).json(); } catch { error('Editor connection unavailable.'); }
-  } finally { sending = false; if (pending) void flush(); }
+  } finally { sending = false; if (pending) void flush(); else queueInspection(); }
 }
 async function stable() {
   clearTimeout(timer);
@@ -132,7 +135,6 @@ async function stable() {
 }
 function clearApproval() {
   decodedId = null;
-  $('#paper-approved').checked = false;
   $('#confirm').disabled = true;
   $('#approval').hidden = true;
 }
@@ -140,9 +142,9 @@ function canConfirm() {
   const prepared = state?.prepared;
   return prepared && !prepared.claimed && prepared.approvalToken && decodedId === prepared.inspectionId &&
     prepared.target === $('#target').value.trim().toLowerCase() && prepared.revision === state.revision &&
-    state.renderedRevision === state.revision && !pending && !sending && synced && !confirming &&
+    state.renderedRevision === state.revision && !pending && !sending && synced && !confirming && !inspecting &&
     prepared.health.bluetooth === 'ready' && !prepared.health.safety_blocked && !prepared.health.active_job_id &&
-    !prepared.health.confirmation_preference_error && $('#paper-approved').checked;
+    !prepared.health.confirmation_preference_error;
 }
 function drawPrinting() {
   $('#printing').hidden = !state.printingAvailable;
@@ -152,7 +154,7 @@ function drawPrinting() {
   else {
     $('#approval').hidden = false;
     if (inspectedId !== prepared.inspectionId) {
-      inspectedId = prepared.inspectionId; decodedId = null; $('#paper-approved').checked = false;
+      inspectedId = prepared.inspectionId; decodedId = null;
       const bitmap = document.createElement('img'); bitmap.width = 384; bitmap.alt = 'Exact helper-produced printer bitmap';
       bitmap.addEventListener('load', () => {
         if (state.prepared?.inspectionId === prepared.inspectionId) {
@@ -165,6 +167,9 @@ function drawPrinting() {
     }
     $('#helper-state').textContent = `Helper: ${prepared.health.bluetooth}; confirmation mode: ${prepared.mode}. Estimated paper: ${prepared.estimatedPaperMm.toFixed(1)} mm.`;
     $('#print-binding').textContent = `Printer ${prepared.target} | Draft revision ${prepared.revision} | Original SHA-256 ${prepared.digest} | Job ${prepared.jobId}`;
+    $('#print-ready').textContent = prepared.claimed ? 'Already sent or claimed. Check its status; this job will not print again.' :
+      prepared.mode === 'ai_client' ? 'Ready when the exact bitmap has loaded. One Print click sends this card.' :
+        'Native confirmation is on. Print will also require approval in the helper.';
     if (prepared.claimed) $('#helper-state').textContent += ' This intent is already claimed. Status only; no replay.';
     lastJobId = prepared.intent?.jobId ?? prepared.jobId;
   }
@@ -177,26 +182,44 @@ function drawPrinting() {
 }
 $('#target').addEventListener('input', () => {
   clearApproval();
+  attemptedInspectionKey = null;
   if (state) {
     state.prepared = null;
-    void post('invalidate_print', {}).catch(failure => error(failure.message));
+    void post('invalidate_print', {}).then(queueInspection).catch(failure => error(failure.message));
   }
 });
-$('#paper-approved').addEventListener('change', () => { $('#confirm').disabled = !canConfirm(); });
-$('#inspect').addEventListener('click', async () => {
+function queueInspection() {
+  clearTimeout(previewTimer);
+  const target = $('#target').value?.trim().toLowerCase();
+  if (!state?.printingAvailable || !targetPattern.test(target ?? '') || pending || sending || !synced ||
+      confirming || inspecting || state.renderedRevision !== state.revision || !state.image ||
+      (state.prepared?.revision === state.revision && state.prepared.target === target) ||
+      attemptedInspectionKey === `${state.revision}:${target}`) return;
+  $('#print-ready').textContent = 'Preparing exact printer preview...';
+  previewTimer = setTimeout(() => inspectForPrinting(), 500);
+}
+async function inspectForPrinting() {
   if (inspecting || confirming) return;
   inspecting = true; clearApproval(); $('#inspect').disabled = true;
   try {
     await stable();
     const target = $('#target').value.trim().toLowerCase();
+    attemptedInspectionKey = `${state.revision}:${target}`;
     const result = await post('inspect_for_print', { revision: state.revision, target });
     if (target !== $('#target').value.trim().toLowerCase() || pending || sending || !synced) {
       await post('invalidate_print', {}); throw new Error('Draft or target changed. Inspect again.');
     }
     setState(result);
-  } catch (failure) { error(failure.message); }
-  finally { inspecting = false; $('#inspect').disabled = false; }
-});
+  } catch (failure) {
+    error(failure.message);
+    $('#print-ready').textContent = 'Print preview unavailable. Resolve the error, then refresh it.';
+  } finally {
+    inspecting = false; $('#inspect').disabled = false;
+    $('#confirm').disabled = !canConfirm();
+    queueInspection();
+  }
+}
+$('#inspect').addEventListener('click', () => inspectForPrinting());
 $('#confirm').addEventListener('click', async event => {
   if (!event.isTrusted || !canConfirm()) return;
   const prepared = state.prepared;
@@ -295,5 +318,5 @@ async function pollState() {
 }
 function startPolling() { if (poll === undefined) poll = setInterval(pollState, 1000); }
 startPolling();
-window.addEventListener('pagehide', () => { clearInterval(poll); poll = undefined; });
+window.addEventListener('pagehide', () => { clearInterval(poll); poll = undefined; clearTimeout(previewTimer); });
 window.addEventListener('pageshow', startPolling);

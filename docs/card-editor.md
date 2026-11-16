@@ -65,20 +65,16 @@ and authorize the helper independently using its existing setup. The helper
 must advertise the atomic confirmation-mode guard; an older helper fails
 closed with an upgrade message instead of falling back to an unsafe dispatch.
 
-The repository entry point currently keeps `enablePrinting = false` so the
-editor can be used without activating the new boundary. After explicit approval
-of print-capable activation, change that gate to `true` and reload the extension.
-Updating the installed native helper and approving physical paper use are
-separate decisions; neither follows from enabling the controls.
-
 Enter the explicit printer UUID established by the existing approved native
-setup, then choose **Inspect for printing**. Review the helper-produced bitmap,
+setup. The exact print preview is prepared automatically after settled edits;
+opening a fresh panel with no selected target does not contact the helper.
+Use **Refresh print preview** after resolving an inspection error. Review the helper-produced bitmap,
 target, revision, original-image digest, confirmation mode and estimated paper
 length. The original renderer PNG and helper bitmap remain distinct.
 The helper's controller state does not establish reachability or paper supply.
 
-After reviewing the exact bitmap, check the per-job paper approval and choose
-**Print this approved image once**. Submission may start immediately when the
+After reviewing the exact bitmap, click **Print** once. That click is the
+per-job paper approval; no separate checkbox is required. Submission may start immediately when the
 helper has explicitly opted into AI-client confirmations; native mode still
 requires the helper's confirmation. The mode cannot change silently between
 inspection and admission: canvas submissions include an optional expected mode
@@ -103,6 +99,8 @@ of serialized data, plus small dispatch/rejection records. No automatic
 expiration or deletion occurs; reaching the limit fails closed. Find retained
 job shows capacity and allows explicit confirmed deletion of an **unsubmitted**
 intent only. Any dispatch claim permanently prevents deletion through the UI.
+Automatic preview preparation can retain one intent for each distinct completed
+image/target/mode; it never submits a job or retries a failed submission.
 
 The same original-image digest, target and mode reuse one retained identity
 across panels and provider restarts. A synced, create-only cross-process claim
