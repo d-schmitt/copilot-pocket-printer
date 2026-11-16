@@ -91,6 +91,10 @@ test('selecting a target and editing only prepare previews; one trusted Print cl
   });
   const { $ } = ui;
   assert.equal(calls.length, 0, 'Opening does not contact the helper');
+  $('#target').value = '';
+  await $('#inspect').events.get('click')();
+  assert.match($('#error').textContent, /Select a printer/);
+  assert.equal(calls.length, 0, 'Refresh with no selected printer stays local and actionable');
   $('#target').value = '11111111-2222-4333-8444-555555555555';
   $('#target').events.get('input')();
   await ui.tick();

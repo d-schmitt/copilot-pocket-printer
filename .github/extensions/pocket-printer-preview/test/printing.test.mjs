@@ -306,3 +306,33 @@ test('print endpoint is not an SDK action and rejects cross-origin/malformed req
   await canvas.onClose(ctx);
   assert.equal(fixture.calls.filter(call => call.method === 'submit_png').length, 1);
 });
+
+test('refresh with an empty printer preserves an actionable error through the real SDK error boundary', async t => {
+  class HostCanvasError extends Error {
+    constructor(code, message) { super(message); this.code = code; }
+  }
+  const directory = await root(t), fixture = fakeHelper();
+  const canvas = editorCanvas(HostCanvasError, { render: async () => original,
+    printing: () => new Printing({ ledger: new PrintLedger(directory), helper: fixture.helper }) });
+  const ctx = { instanceId: 'missing-printer' };
+  const { url } = await canvas.open(ctx);
+  t.after(() => canvas.onClose(ctx));
+  const before = await (await fetch(url + 'state')).json();
+  const response = await fetch(url + 'inspect_for_print', { method: 'POST',
+    headers: { Origin: new URL(url).origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision: 1, target: '' }) });
+  assert.equal(response.status, 400);
+  const failure = (await response.json()).error;
+  assert.equal(failure.code, 'printer_required');
+  assert.match(failure.message, /Select a printer/);
+  const after = await (await fetch(url + 'state')).json();
+  assert.deepEqual(after.error, failure, 'The banner keeps the specific error, not a second generic wrapper');
+  assert.deepEqual(after.draft, before.draft);
+  assert.deepEqual(after.image, before.image);
+  assert.equal(after.revision, before.revision);
+  assert.equal(fixture.calls.length, 0, 'No helper call or job identity is created without a target');
+  assert.deepEqual(await readdir(directory), []);
+  const inspectAction = canvas.actions.find(action => action.name === 'inspect_for_print');
+  await assert.rejects(inspectAction.handler({ ...ctx, input: { revision: 1, target: '' } }),
+    error => error instanceof HostCanvasError && error.code === 'printer_required');
+});

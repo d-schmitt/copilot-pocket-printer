@@ -200,6 +200,10 @@ function queueInspection() {
 }
 async function inspectForPrinting() {
   if (inspecting || confirming) return;
+  if (!targetPattern.test($('#target').value?.trim().toLowerCase() ?? '')) {
+    error('Select a printer before refreshing the print preview.');
+    return;
+  }
   inspecting = true; clearApproval(); $('#inspect').disabled = true;
   try {
     await stable();

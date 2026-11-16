@@ -128,6 +128,7 @@ export class CardEditor {
     this.mutable();
     objectKeys(input, ['revision', 'target']);
     this.invalidatePrint();
+    if (!input.target) throw new PreviewError('printer_required', 'Select a printer before refreshing the print preview.');
     if (!this.printing || input.revision !== this.revision || this.renderedRevision !== this.revision || !this.image) {
       throw new PreviewError('preview_not_ready', 'Render the current draft before inspecting for printing.');
     }
@@ -186,7 +187,7 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
     if (!panel || panel.editor.closed) throw new ErrorType('panel_closed', 'Open a card editor first.');
     return panel;
   }
-  async function invoke(editor, name, input) {
+  async function invoke(editor, name, input, sdk = false) {
     try {
       if (name === 'get_draft') { objectKeys(input, []); return editor.state(); }
       if (name === 'list_drafts') { objectKeys(input, []); return await editor.store.list(); }
@@ -203,6 +204,8 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
       if (name === 'list_prints') { objectKeys(input, []); return await editor.printing.ledger.list(); }
       throw new PreviewError('unknown_action', 'Unsupported editor action.');
     } catch (error) {
+      // HTTP has its own error boundary. Wrapping twice loses the original typed failure.
+      if (!sdk) throw error;
       const failure = editor.fail(error);
       throw new ErrorType(failure.code, failure.message);
     }
@@ -240,7 +243,7 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
     actions: Object.entries(descriptions).map(([name, description]) => ({
       name, description,
       inputSchema: { type: 'object', properties: shapes[name], required: Object.keys(shapes[name]), additionalProperties: false },
-      handler: async ctx => invoke((await get(ctx.instanceId)).editor, name, ctx.input)
+      handler: async ctx => invoke((await get(ctx.instanceId)).editor, name, ctx.input, true)
     })),
     async open(ctx) {
       let pending = panels.get(ctx.instanceId);
