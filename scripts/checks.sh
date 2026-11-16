@@ -25,6 +25,7 @@ python3 scripts/smoke_test.py "$BIN_DIR/printer-cli"
 python3 scripts/test_install_printer.py
 CARD_RENDERER_BIN="$BIN_DIR/card-renderer" python3 -m unittest discover -s Tests/DailyCardTests -v
 HELPER_CHECKS_BIN="$BIN_DIR/printer-helper-checks" npm test --prefix bridge
+node --test .github/extensions/pocket-printer-preview/test/*.test.mjs
 
 if [[ "$run_xctest" == true ]]; then
   swift test
