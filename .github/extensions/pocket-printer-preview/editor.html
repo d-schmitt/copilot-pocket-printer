@@ -38,10 +38,38 @@
         <div id="metadata"></div>
         <p class="hint">Estimated paper includes 80 clearance dots at nominal 203 dpi.</p>
         <div class="paper-window" tabindex="0" role="region" aria-label="384-pixel card preview; scroll if needed">
+          <!-- Hidden until the script assigns a successfully rendered revision URL. -->
           <img id="card" width="384" alt="Current rendered card" hidden>
         </div>
-        <div id="printing"></div>
-        <p class="hint">Original renderer PNG, not yet inspected by the helper. No printing in this editor increment.</p>
+        <p class="hint">The image above is the original renderer PNG. Inspect below to review the helper's exact printer bitmap.</p>
+        <section id="printing" hidden aria-label="Explicitly approved printing">
+          <h2>Print one card</h2>
+          <label for="target">Explicit printer UUID</label>
+          <input id="target" type="text" autocomplete="off" spellcheck="false" placeholder="Printer UUID from your approved setup">
+          <button id="inspect">Inspect for printing</button>
+          <p class="hint">The helper must already be running. Status does not prove printer reachability or paper availability.</p>
+          <div id="approval" hidden>
+            <p id="helper-state"></p>
+            <p id="print-binding"></p>
+            <div class="paper-window" id="print-image"></div>
+            <label class="paper-approval"><input id="paper-approved" type="checkbox">
+              I approve this exact bitmap and printer for one print, using the estimated paper shown.
+              Submission may start immediately in AI-client mode.
+            </label>
+            <button id="confirm" disabled>Print this approved image once</button>
+          </div>
+          <p id="job-status" role="status"></p>
+          <button id="status" disabled>Check original job status</button>
+          <button id="history">Find retained job</button>
+          <div id="job-history" hidden>
+            <p id="capacity"></p>
+            <label for="job-choice">Retained intent</label><select id="job-choice"></select>
+            <button id="recover">Query selected job only</button>
+            <button id="discard-intent">Discard unsubmitted intent</button>
+          </div>
+          <p class="hint">No automatic retries. Closing this panel does not cancel an admitted job.
+            Native mode and uncertainty recovery remain in the helper.</p>
+        </section>
       </section>
     </div>
     <footer>

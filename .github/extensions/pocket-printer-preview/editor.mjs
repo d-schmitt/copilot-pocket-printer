@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PreviewError, inspectPng } from './png.mjs';
 import { exampleDraft, validateDraft, objectKeys, renderDraft } from './draft.mjs';
 import { draftStore } from './private-store.mjs';
 import { servePanel, readJson } from './loopback.mjs';
 
 export class CardEditor {
-  constructor({ render = renderDraft, store = draftStore() } = {}) {
+  constructor({ render = renderDraft, store = draftStore(), printing = null } = {}) {
     this.render = render;
     this.store = store;
     this.draft = exampleDraft();
@@ -13,30 +13,54 @@ export class CardEditor {
     this.renderedRevision = null;
     this.saved = null;
     this.image = null;
+    this.imageMetadata = null;
     this.error = null;
     this.closed = false;
     this.pending = false;
     this.rendering = null;
+    this.printing = typeof printing === 'function' ? printing() : printing;
+    this.prepared = null;
+    this.printGeneration = 0;
+    this.dispatching = false;
+    this.job = null;
   }
   fail(error) {
+    const diagnostic = typeof error.code === 'string' && /^[A-Z_]{1,40}$/.test(error.code) ? error.code :
+      error instanceof TypeError ? 'TYPE_ERROR' : 'UNEXPECTED_ERROR';
     this.error = error instanceof PreviewError ? { code: error.code, message: error.message } :
-      { code: 'editor_failed', message: 'Editor operation failed. Check the renderer or private storage; no printing was requested.' };
-    if (!(error instanceof PreviewError)) console.error('pocket-card-editor: operation failed');
+      { code: 'editor_failed', message: `Editor operation failed (${diagnostic}). Check the renderer or private storage and inspect any existing job before continuing.` };
+    if (!(error instanceof PreviewError)) console.error(`pocket-card-editor: ${diagnostic}`);
     return this.error;
   }
-  state() {
+  state(browser = false) {
+    const prepared = this.prepared;
     return {
       draft: this.draft, revision: this.revision, renderedRevision: this.renderedRevision,
       saved: this.saved, rendering: Boolean(this.rendering), error: this.error,
-      image: this.image ? { ...inspectPng(this.image), sha256: createHash('sha256').update(this.image).digest('hex') } : null,
-      printingAvailable: false
+      image: this.imageMetadata,
+      printingAvailable: Boolean(this.printing),
+      prepared: prepared ? {
+        jobId: prepared.intent.jobId, target: prepared.intent.target, digest: prepared.intent.digest,
+        bitmapDigest: prepared.intent.bitmapDigest, revision: prepared.revision,
+        mode: prepared.intent.mode, inspectionId: prepared.inspectionId, claimed: prepared.claimed,
+        health: prepared.health, estimatedPaperMm: prepared.estimatedPaperMm,
+        ...(browser && !prepared.claimed ? { approvalToken: prepared.approvalToken } : {})
+      } : null,
+      dispatching: this.dispatching, job: this.job
     };
   }
   changed() {
     this.revision++;
     this.renderedRevision = null;
     this.image = null;
+    this.imageMetadata = null;
     this.error = null;
+    this.invalidatePrint();
+  }
+  invalidatePrint() { this.printGeneration++; this.prepared = null; }
+  mutable() {
+    if (this.closed) throw new PreviewError('panel_closed', 'This panel was closed.');
+    if (this.dispatching) throw new PreviewError('dispatch_in_progress', 'A confirmed dispatch is being recorded. Wait before changing this draft.');
   }
   async refresh() {
     this.pending = true;
@@ -48,9 +72,10 @@ export class CardEditor {
         const draft = structuredClone(this.draft);
         try {
           const bytes = await this.render(draft);
-          inspectPng(bytes);
+          const metadata = inspectPng(bytes);
           if (this.closed || revision !== this.revision) continue;
           this.image = bytes;
+          this.imageMetadata = { ...metadata, sha256: createHash('sha256').update(bytes).digest('hex') };
           this.renderedRevision = revision;
           this.error = null;
         } catch (error) {
@@ -63,8 +88,10 @@ export class CardEditor {
     return this.state();
   }
   async update(input) {
+    this.mutable();
     objectKeys(input, ['revision', 'draft']);
     if (input.revision !== this.revision) throw new PreviewError('stale_draft', 'The draft changed. Refresh before editing it again.');
+    // Even rejected local edits must not leave the previous bitmap approved as current.
     this.changed();
     this.draft = validateDraft(input.draft);
     await this.refresh();
@@ -86,6 +113,7 @@ export class CardEditor {
     return this.state();
   }
   async load(input) {
+    this.mutable();
     objectKeys(input, ['revision', 'id']);
     if (input.revision !== this.revision) throw new PreviewError('stale_draft', 'Refresh before opening a saved draft.');
     this.changed();
@@ -95,6 +123,54 @@ export class CardEditor {
     this.draft = saved.draft;
     this.saved = { id: saved.id, revision: saved.revision };
     return this.refresh();
+  }
+  async inspectForPrint(input) {
+    this.mutable();
+    objectKeys(input, ['revision', 'target']);
+    this.invalidatePrint();
+    if (!this.printing || input.revision !== this.revision || this.renderedRevision !== this.revision || !this.image) {
+      throw new PreviewError('preview_not_ready', 'Render the current draft before inspecting for printing.');
+    }
+    const revision = this.revision, generation = this.printGeneration;
+    const current = () => {
+      if (this.closed || revision !== this.revision || generation !== this.printGeneration) {
+        throw new PreviewError('stale_preview', 'Draft or target changed during inspection. Inspect again.');
+      }
+    };
+    const result = await this.printing.inspect({ original: this.image, target: input.target, revision, current });
+    current();
+    this.prepared = { ...result, revision, inspectionId: randomBytes(16).toString('hex'),
+      approvalToken: randomBytes(32).toString('hex'),
+      estimatedPaperMm: inspectPng(Buffer.from(result.intent.preview, 'base64')).estimatedPaperMm };
+    this.error = null;
+    return this.state();
+  }
+  async confirmPrint(input) {
+    objectKeys(input, ['revision', 'jobId', 'target', 'digest', 'bitmapDigest', 'inspectionId', 'approvalToken', 'paperApproved']);
+    const prepared = this.prepared;
+    if (!this.printing || !prepared || prepared.claimed || input.paperApproved !== true ||
+        typeof input.approvalToken !== 'string' || !/^[a-f0-9]{64}$/.test(input.approvalToken) ||
+        !timingSafeEqual(Buffer.from(input.approvalToken), Buffer.from(prepared.approvalToken)) ||
+        input.jobId !== prepared.intent.jobId || input.target !== prepared.intent.target ||
+        input.digest !== prepared.intent.digest || input.bitmapDigest !== prepared.intent.bitmapDigest ||
+        input.inspectionId !== prepared.inspectionId || input.revision !== prepared.revision) {
+      throw new PreviewError('approval_required', 'Explicit approval of this exact inspected image and target is required.');
+    }
+    const current = () => {
+      if (this.closed || this.prepared !== prepared || this.revision !== prepared.revision ||
+          this.renderedRevision !== this.revision || !this.image ||
+          createHash('sha256').update(this.image).digest('hex') !== prepared.intent.digest) {
+        throw new PreviewError('stale_approval', 'The approved image is no longer current. Nothing was dispatched.');
+      }
+    };
+    current();
+    if (this.dispatching) throw new PreviewError('dispatch_in_progress', 'This confirmed job is already being dispatched. Query its status.');
+    this.dispatching = true;
+    // Consume this panel's approval before any await. The durable ledger independently gates other panels.
+    prepared.claimed = true;
+    try { this.job = await this.printing.dispatch(prepared.intent, current); }
+    finally { this.dispatching = false; }
+    return this.state();
   }
   close() {
     this.closed = true;
@@ -117,6 +193,14 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
       if (name === 'update_draft') return await editor.update(input);
       if (name === 'save_draft') return await editor.save(input);
       if (name === 'open_draft') return await editor.load(input);
+      if (name === 'inspect_for_print') return await editor.inspectForPrint(input);
+      if (name === 'invalidate_print') { objectKeys(input, []); editor.invalidatePrint(); return editor.state(); }
+      if (name === 'get_print_status') {
+        objectKeys(input, ['jobId']);
+        editor.job = await editor.printing.status(input.jobId);
+        return editor.state();
+      }
+      if (name === 'list_prints') { objectKeys(input, []); return await editor.printing.ledger.list(); }
       throw new PreviewError('unknown_action', 'Unsupported editor action.');
     } catch (error) {
       const failure = editor.fail(error);
@@ -137,6 +221,18 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
     save_draft: { revision: integer, copy: { type: 'boolean' } },
     open_draft: { revision: integer, id: { type: 'string', pattern: '^[a-f0-9-]{36}$' } }
   };
+  if (options.printing) {
+    Object.assign(descriptions, {
+      inspect_for_print: 'Inspect the current image with the independently running helper and explicit target. Does not print.',
+      invalidate_print: 'Discard the current inspection/approval; does not cancel an already admitted job.',
+      get_print_status: 'Query the original durable job ID. Never submit, retry or replace it.',
+      list_prints: 'Explicitly list retained local print intent IDs for recovery. Never prints.'
+    });
+    Object.assign(shapes, {
+      inspect_for_print: { revision: integer, target: { type: 'string', pattern: '^[a-f0-9-]{36}$' } },
+      invalidate_print: {}, get_print_status: { jobId: { type: 'string', pattern: '^[a-f0-9-]{36}$' } }, list_prints: {}
+    });
+  }
   return {
     id: 'pocket-printer-editor', displayName: 'Pocket Card Editor',
     description: 'Edit a synthetic card, reorder sections, choose joke or Sudoku and explicitly save/open private local drafts.',
@@ -161,13 +257,35 @@ export function editorCanvas(ErrorType = PreviewError, options = {}) {
               'view.css': ['view.css', 'text/css; charset=utf-8']
             },
             get: (route, query) => {
-              if (route === 'state') return { type: 'application/json', body: JSON.stringify(editor.state()) };
+              if (route === 'state') return { type: 'application/json', body: JSON.stringify(editor.state(true)) };
               if (route === 'image.png' && editor.image && String(editor.renderedRevision) === query.get('revision')) {
                 return { type: 'image/png', body: editor.image };
               }
+              if (route === 'print-preview.png' && editor.prepared?.inspectionId === query.get('inspection')) {
+                return { type: 'image/png', body: Buffer.from(editor.prepared.intent.preview, 'base64') };
+              }
             },
-            post: Object.fromEntries(Object.keys(descriptions).map(name =>
-              [name, async req => invoke(editor, name, await readJson(req))])),
+            post: {
+              ...Object.fromEntries(Object.keys(descriptions).map(name =>
+                [name, async req => {
+                  const result = await invoke(editor, name, await readJson(req));
+                  return Array.isArray(result) ? result : editor.state(true);
+                }])),
+              ...(editor.printing ? {
+                discard_unsubmitted: async req => {
+                  const input = await readJson(req);
+                  objectKeys(input, ['jobId', 'confirmed']);
+                  if (input.confirmed !== true) throw new PreviewError('confirmation_required', 'Explicit confirmation is required to discard an unsubmitted intent.');
+                  const result = await editor.printing.ledger.discardUnsubmitted(input.jobId);
+                  if (editor.prepared?.intent.jobId === input.jobId) editor.invalidatePrint();
+                  return result;
+                },
+                confirm_print: async req => {
+                  await editor.confirmPrint(await readJson(req));
+                  return editor.state(true);
+                }
+              } : {})
+            },
             onError: error => editor.fail(error)
           });
           return { editor, server };

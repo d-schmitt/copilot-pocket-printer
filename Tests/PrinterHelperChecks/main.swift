@@ -84,6 +84,11 @@ struct HelperChecks {
         try check(calls == 0, "construction must not execute")
         let health = service.handle(try request("helper_status"))
         try check(health.ok && health.result?.health?.bluetooth == "ready", "pure status")
+        try check(health.result?.health?.supports_expected_confirmation_mode == true, "status advertises atomic confirmation-mode guard")
+        var oldHealth = try JSONSerialization.jsonObject(with: JSONEncoder().encode(health.result!.health!)) as! [String: Any]
+        oldHealth.removeValue(forKey: "supports_expected_confirmation_mode")
+        let legacyHealth = try JSONDecoder().decode(HelperHealth.self, from: JSONSerialization.data(withJSONObject: oldHealth))
+        try check(legacyHealth.supports_expected_confirmation_mode == nil, "old status decodes without claiming support for the new guard")
         let inspected = service.handle(try request("inspect_png", ["png_base64": encoded]))
         try check(inspected.result?.image?.width == 384 && inspected.result?.image?.height == 288, "inspect actual PNG")
         let exactPreview = Data(base64Encoded: inspected.result!.preview_png_base64!)!
@@ -115,6 +120,13 @@ struct HelperChecks {
             try check(service.handle(try request("submit_png", fields)).error?.code == "bluetooth_\(permission)", "typed permission failure")
         }
         state = "ready"
+        var guarded = fields; guarded["expected_confirmation_mode"] = "ai_client"
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "confirmation_mode_changed" && calls == 0,
+                  "stale mode guard rejects before durable admission or execution")
+        guarded["expected_confirmation_mode"] = NSNull()
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "invalid_request", "null mode guard is not an omitted guard")
+        guarded["expected_confirmation_mode"] = "unknown"
+        try check(service.handle(try request("submit_png", guarded)).error?.code == "invalid_request", "unknown mode guard rejected")
         let admitted = service.handle(try request("submit_png", fields))
         try check(admitted.result?.receipt?.state == "awaiting_approval" && calls == 0, "MCP alone cannot physically print")
         let id = admitted.result!.receipt!.job_id
@@ -253,7 +265,11 @@ struct HelperChecks {
             try check(service.handle(try request("submit_png", fresh)).error?.code == "bluetooth_\(state)" && calls == 0, "client mode preserves Bluetooth guard")
         }
         radio = "ready"
-        let admitted = service.handle(try request("submit_png", fresh)).result!.receipt!
+        var staleNativeMode = fresh; staleNativeMode["expected_confirmation_mode"] = "native"
+        try check(service.handle(try request("submit_png", staleNativeMode)).error?.code == "confirmation_mode_changed" && calls == 0,
+                  "native-to-client mode change cannot turn a stale approval into immediate execution")
+        var guardedFresh = fresh; guardedFresh["expected_confirmation_mode"] = "ai_client"
+        let admitted = service.handle(try request("submit_png", guardedFresh)).result!.receipt!
         try check(admitted.state == "in_progress" && admitted.confirmation_mode == .aiClient && calls == 0, "same-turn admission returns current persisted state before scheduled execution")
         try renderPreview(service, suffix: "ai-client")
         try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "in_progress", "same in-flight ID cannot schedule another execution")

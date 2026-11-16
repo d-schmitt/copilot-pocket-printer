@@ -156,6 +156,9 @@ public final class HelperService {
             }
             return previous
         }
+        if let expectedMode = request.expected_confirmation_mode, expectedMode != confirmationMode {
+            throw HelperFailure("confirmation_mode_changed", "Confirmation mode changed after inspection. No job was admitted.")
+        }
         guard !safetyBlocked else { throw HelperFailure("safety_blocked", "Uncertain transfer or storage error. Quit and inspect receipts before considering another explicitly approved job.") }
         guard active == nil else { throw HelperFailure("busy", "One job is already admitted. Nothing was queued.") }
         guard bluetooth() == "ready" else {

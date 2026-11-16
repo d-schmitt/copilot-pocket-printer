@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 const labels = { heading: 'Name & title', day: 'Day & daylight', walk: 'Walk', meetings: 'Meetings', bottom: 'Joke / Sudoku / art' };
 let state, draft, pending = false, sending = false, synced = true, timer, dragId;
+let inspectedId = null, decodedId = null, confirming = false, lastJobId = null, inspecting = false;
 
 function error(message) { $('#error').textContent = message; $('#error').hidden = !message; }
 async function post(name, input) {
@@ -21,6 +22,7 @@ function setState(value) {
   } else $('#metadata').textContent = '';
   $('#save-status').textContent = value.saved ? 'Saved draft open; Save to keep further edits' : 'Unsaved example';
   error(value.error?.message ?? '');
+  drawPrinting();
 }
 function field(key, label, multiline = false) {
   const wrapper = document.createElement('div');
@@ -106,6 +108,7 @@ function changed() {
   $('#card').hidden = true;
   $('#render-status').textContent = 'Updating draft...';
   $('#metadata').textContent = '';
+  clearApproval();
   clearTimeout(timer);
   timer = setTimeout(flush, 300);
 }
@@ -127,6 +130,122 @@ async function stable() {
   await flush();
   if (sending || pending || !synced) throw new Error('Finish or correct the current edit before continuing.');
 }
+function clearApproval() {
+  decodedId = null;
+  $('#paper-approved').checked = false;
+  $('#confirm').disabled = true;
+  $('#approval').hidden = true;
+}
+function canConfirm() {
+  const prepared = state?.prepared;
+  return prepared && !prepared.claimed && prepared.approvalToken && decodedId === prepared.inspectionId &&
+    prepared.target === $('#target').value.trim().toLowerCase() && prepared.revision === state.revision &&
+    state.renderedRevision === state.revision && !pending && !sending && synced && !confirming &&
+    prepared.health.bluetooth === 'ready' && !prepared.health.safety_blocked && !prepared.health.active_job_id &&
+    !prepared.health.confirmation_preference_error && $('#paper-approved').checked;
+}
+function drawPrinting() {
+  $('#printing').hidden = !state.printingAvailable;
+  if (!state.printingAvailable) return;
+  const prepared = state.prepared;
+  if (!prepared || pending || !synced) clearApproval();
+  else {
+    $('#approval').hidden = false;
+    if (inspectedId !== prepared.inspectionId) {
+      inspectedId = prepared.inspectionId; decodedId = null; $('#paper-approved').checked = false;
+      const bitmap = document.createElement('img'); bitmap.width = 384; bitmap.alt = 'Exact helper-produced printer bitmap';
+      bitmap.addEventListener('load', () => {
+        if (state.prepared?.inspectionId === prepared.inspectionId) {
+          decodedId = prepared.inspectionId; $('#confirm').disabled = !canConfirm();
+        }
+      });
+      bitmap.addEventListener('error', () => { decodedId = null; $('#confirm').disabled = true; error('Exact printer bitmap could not be displayed. Do not print.'); });
+      bitmap.src = `print-preview.png?inspection=${prepared.inspectionId}`;
+      $('#print-image').replaceChildren(bitmap);
+    }
+    $('#helper-state').textContent = `Helper: ${prepared.health.bluetooth}; confirmation mode: ${prepared.mode}. Estimated paper: ${prepared.estimatedPaperMm.toFixed(1)} mm.`;
+    $('#print-binding').textContent = `Printer ${prepared.target} | Draft revision ${prepared.revision} | Original SHA-256 ${prepared.digest} | Job ${prepared.jobId}`;
+    if (prepared.claimed) $('#helper-state').textContent += ' This intent is already claimed. Status only; no replay.';
+    lastJobId = prepared.intent?.jobId ?? prepared.jobId;
+  }
+  if (state.job) {
+    lastJobId = state.job.jobId;
+    $('#job-status').textContent = `${state.job.state}: ${state.job.message ?? ''} Paper output is not confirmed by transport submission.`;
+  }
+  $('#confirm').disabled = !canConfirm();
+  $('#status').disabled = !lastJobId || confirming;
+}
+$('#target').addEventListener('input', () => {
+  clearApproval();
+  if (state) {
+    state.prepared = null;
+    void post('invalidate_print', {}).catch(failure => error(failure.message));
+  }
+});
+$('#paper-approved').addEventListener('change', () => { $('#confirm').disabled = !canConfirm(); });
+$('#inspect').addEventListener('click', async () => {
+  if (inspecting || confirming) return;
+  inspecting = true; clearApproval(); $('#inspect').disabled = true;
+  try {
+    await stable();
+    const target = $('#target').value.trim().toLowerCase();
+    const result = await post('inspect_for_print', { revision: state.revision, target });
+    if (target !== $('#target').value.trim().toLowerCase() || pending || sending || !synced) {
+      await post('invalidate_print', {}); throw new Error('Draft or target changed. Inspect again.');
+    }
+    setState(result);
+  } catch (failure) { error(failure.message); }
+  finally { inspecting = false; $('#inspect').disabled = false; }
+});
+$('#confirm').addEventListener('click', async event => {
+  if (!event.isTrusted || !canConfirm()) return;
+  const prepared = state.prepared;
+  confirming = true; clearApproval();
+  document.querySelectorAll('#sections input, #sections textarea, #sections select, #sections button, #target, #inspect').forEach(node => { node.disabled = true; });
+  try {
+    setState(await post('confirm_print', {
+      revision: prepared.revision, jobId: prepared.jobId, target: prepared.target,
+      digest: prepared.digest, bitmapDigest: prepared.bitmapDigest, inspectionId: prepared.inspectionId,
+      approvalToken: prepared.approvalToken, paperApproved: true
+    }));
+  } catch (failure) {
+    state.prepared = null;
+    error(`${failure.message} Do not retry. Check the original job status.`);
+  } finally {
+    confirming = false;
+    $('#target').disabled = false; $('#inspect').disabled = false;
+    drawSections(); drawPrinting();
+  }
+});
+async function checkJob(jobId) {
+  try { setState(await post('get_print_status', { jobId })); }
+  catch (failure) { error(failure.message); }
+}
+$('#status').addEventListener('click', () => { if (lastJobId) void checkJob(lastJobId); });
+$('#history').addEventListener('click', async () => {
+  try {
+    const jobs = await post('list_prints', {});
+    $('#job-choice').replaceChildren();
+    for (const job of jobs) {
+      const option = document.createElement('option'); option.value = job.jobId;
+      option.textContent = `${job.jobId} | ${job.claimed ? 'Claimed, query receipt' : 'Not dispatched'}`;
+      $('#job-choice').append(option);
+    }
+    $('#job-history').hidden = false; $('#recover').disabled = !jobs.length;
+    $('#capacity').textContent = `${jobs.length} of 64 private intent slots used. Claimed jobs cannot be removed.`;
+    $('#discard-intent').disabled = !jobs.length;
+  } catch (failure) { error(failure.message); }
+});
+$('#recover').addEventListener('click', () => void checkJob($('#job-choice').value));
+$('#discard-intent').addEventListener('click', async event => {
+  const jobId = $('#job-choice').value;
+  if (!event.isTrusted || !jobId || !window.confirm('Discard this unsubmitted intent and its cached images? Claimed jobs cannot be removed.')) return;
+  try {
+    await post('discard_unsubmitted', { jobId, confirmed: true });
+    $('#job-history').hidden = true; clearApproval();
+    setState(await (await fetch('state')).json());
+  } catch (failure) { error(failure.message); }
+});
 for (const [id, copy] of [['save', false], ['copy', true]]) {
   $(`#${id}`).addEventListener('click', async () => {
     try { await stable(); setState(await post('save_draft', { revision: state.revision, copy })); $('#save-status').textContent = 'Saved privately on this Mac'; }
@@ -144,19 +263,6 @@ $('#browse').addEventListener('click', async () => {
     $('#saved-drafts').hidden = false; $('#open').disabled = !records.length;
     if (!records.length) error('No saved drafts yet. Save this draft first.');
   } catch (failure) { error(failure.message); }
-  const poll = setInterval(async () => {
-    if (pending || sending || !synced) return;
-    try {
-      const response = await fetch('state', { cache: 'no-store' });
-      if (!response.ok) throw new Error('Editor connection unavailable.');
-      const latest = await response.json();
-      if (pending || sending || !synced) return;
-      if (latest.revision !== state.revision) {
-        setState(latest); draft = structuredClone(latest.draft); drawSections();
-      }
-    } catch (failure) { error(failure.message); }
-  }, 1000);
-  window.addEventListener('pagehide', () => clearInterval(poll));
 });
 $('#open').addEventListener('click', async () => {
   try {
@@ -171,3 +277,23 @@ try {
   if (!response.ok) throw new Error('Editor unavailable.');
   setState(await response.json()); draft = structuredClone(state.draft); drawSections();
 } catch (failure) { error(failure.message); }
+let poll;
+async function pollState() {
+  if (!state || pending || sending || !synced || confirming || inspecting) return;
+  try {
+    const response = await fetch('state', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Editor connection unavailable.');
+    const latest = await response.json();
+    if (pending || sending || !synced || confirming || inspecting) return;
+    if (latest.revision !== state.revision) {
+      setState(latest); draft = structuredClone(latest.draft); drawSections();
+    } else if (latest.renderedRevision !== state.renderedRevision || latest.image?.sha256 !== state.image?.sha256 ||
+        latest.prepared?.inspectionId !== state.prepared?.inspectionId ||
+        JSON.stringify(latest.job) !== JSON.stringify(state.job) ||
+        JSON.stringify(latest.error) !== JSON.stringify(state.error)) setState(latest);
+  } catch (failure) { error(failure.message); }
+}
+function startPolling() { if (poll === undefined) poll = setInterval(pollState, 1000); }
+startPolling();
+window.addEventListener('pagehide', () => { clearInterval(poll); poll = undefined; });
+window.addEventListener('pageshow', startPolling);

@@ -7,7 +7,9 @@ export const MAX_FRAME = 2 * 1024 * 1024;
 export const MAX_PNG = 1024 * 1024;
 
 export class BridgeError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, helperReported = false) {
+    super(message); this.code = code; this.helperReported = helperReported;
+  }
 }
 
 export function defaultSocket() {
@@ -48,14 +50,14 @@ export async function callHelper(method, fields, { socketPath = defaultSocket(),
       signal?.removeEventListener('abort', abort);
       socket.destroy();
     };
-    const fail = (code, message) => {
+    const fail = (code, message, helperReported = false) => {
       if (finished) return;
       finished = true;
       cleanup();
       const uncertainty = attempted && method === 'submit_png'
         ? ` Admission may have occurred for job ${fields.job_id}. Query that same ID; never automatically submit again or invent a replacement ID.`
         : ' No automatic retry.';
-      reject(new BridgeError(code, message + uncertainty));
+      reject(new BridgeError(code, message + uncertainty, helperReported));
     };
     const abort = () => fail('request_cancelled', 'Client cancelled the RPC; this does not undo an admitted job.');
     signal?.addEventListener('abort', abort, { once: true });
@@ -88,7 +90,7 @@ export async function callHelper(method, fields, { socketPath = defaultSocket(),
         if (typeof reply.error?.code !== 'string' || typeof reply.error?.message !== 'string') {
           fail('invalid_ipc_reply', 'Malformed helper error.'); return;
         }
-        fail(reply.error.code, reply.error.message); return;
+        fail(reply.error.code, reply.error.message, returnedId === requestId); return;
       }
       if (!reply.result || typeof reply.result !== 'object') { fail('invalid_ipc_reply', 'Missing helper result.'); return; }
       finished = true; cleanup(); resolve(reply.result);

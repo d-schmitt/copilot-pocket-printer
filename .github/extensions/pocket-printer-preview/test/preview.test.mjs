@@ -209,3 +209,20 @@ test('read-only preview imports stay independent of helper, BLE and portable MCP
     assert.doesNotMatch(source, /\bimport\s*\(|\bfetch\s*\(|\bwriteFile\s*\(/);
   }
 });
+
+test('editor dependencies isolate helper IPC to printing and process launch to the fixed renderer', async () => {
+  const dependencies = {
+    'extension.mjs': ['@github/copilot-sdk/extension', './preview.mjs', './editor.mjs', './printing.mjs'],
+    'editor.mjs': ['node:crypto', './png.mjs', './draft.mjs', './private-store.mjs', './loopback.mjs'],
+    'draft.mjs': ['node:child_process', 'node:fs/promises', 'node:os', 'node:path', 'node:url', './png.mjs'],
+    'private-store.mjs': ['node:fs', 'node:fs/promises', 'node:os', 'node:path', 'node:crypto', './png.mjs', './draft.mjs'],
+    'printing.mjs': ['node:crypto', 'node:fs/promises', 'node:path', '../../../bridge/ipc.mjs', './png.mjs', './private-store.mjs', './draft.mjs']
+  };
+  for (const [file, allowed] of Object.entries(dependencies)) {
+    const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    for (const [, dependency] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
+      assert.ok(allowed.includes(dependency), `Unexpected dependency in ${file}: ${dependency}`);
+    }
+    assert.doesNotMatch(source, /\bimport\s*\(|\brequire\s*\(|\bfetch\s*\(/);
+  }
+});

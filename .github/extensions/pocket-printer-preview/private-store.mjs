@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { mkdir, lstat, open, rename, readdir, unlink } from 'node:fs/promises';
+import { mkdir, lstat, open, rename, readdir, unlink, link } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -39,13 +39,24 @@ export async function readRecord(path, limit) {
 }
 export async function writeRecord(path, value, { exclusive = false } = {}) {
   const bytes = Buffer.from(JSON.stringify(value));
-  const temporary = exclusive ? path : `${path}.${randomUUID()}.tmp`;
+  const temporary = `${path}.${randomUUID()}.tmp`;
   const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { await file.writeFile(bytes); await file.sync(); }
-  finally { await file.close(); }
-  if (!exclusive) await rename(temporary, path);
-  const directory = await open(join(path, '..'), constants.O_RDONLY);
-  try { await directory.sync(); } finally { await directory.close(); }
+  let published = false;
+  try {
+    try { await file.writeFile(bytes); await file.sync(); }
+    finally { await file.close(); }
+    // link publishes an already-synced complete record without replacing an existing claim.
+    if (exclusive) { await link(temporary, path); await unlink(temporary); }
+    else await rename(temporary, path);
+    published = true;
+    const directory = await open(join(path, '..'), constants.O_RDONLY);
+    try { await directory.sync(); } finally { await directory.close(); }
+  } finally {
+    if (!published) {
+      try { await unlink(temporary); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
 }
 export async function withStoreLock(root, operation) {
   await privateDirectory(root);
