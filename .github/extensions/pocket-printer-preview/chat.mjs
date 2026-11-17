@@ -233,7 +233,8 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   return {
     id: 'pocket-printer-chat', displayName: 'Pocket Printer V2',
     description: 'Choose Daily card, Focus list or Surprise, customize in chat, and let the user reveal and review the exact preview before Print.',
-    inputSchema: shape({ documentId: documentIdSchema }),
+    inputSchema: { type: ['object', 'null'], properties: { documentId: documentIdSchema },
+      required: [], additionalProperties: false },
     actions: actions.map(([name, description, properties]) => ({
       name, description, inputSchema: shape(properties),
       handler: async ctx => {
@@ -243,13 +244,16 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
       }
     })),
     async open(ctx) {
-      objectKeys(ctx.input, ['documentId']);
-      requireDocumentId(ctx.input.documentId);
+      const input = ctx.input ?? {};
+      const hasDocumentId = Object.hasOwn(input, 'documentId');
+      objectKeys(input, hasDocumentId ? ['documentId'] : []);
+      const documentId = hasDocumentId ? input.documentId : 'project-chat-v2';
+      requireDocumentId(documentId);
       let pending = panels.get(ctx.instanceId);
       if (!pending) {
         if (panels.size >= 4) throw new ErrorType('panel_limit', 'Close a V2 panel before opening another (maximum four).');
         pending = (async () => {
-          const editor = new ChatDocument(ctx.input.documentId, options);
+          const editor = new ChatDocument(documentId, options);
           await editor.adopt(await editor.documents.initialize());
           const server = await servePanel({
             assets: { '': ['chat.html', 'text/html; charset=utf-8'],
@@ -290,7 +294,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
       }
       try {
         const panel = await pending;
-        if (panel.editor.documentId !== ctx.input.documentId) throw new ErrorType('document_conflict', 'Use a new panel for a different document.');
+        if (panel.editor.documentId !== documentId) throw new ErrorType('document_conflict', 'Use a new panel for a different document.');
         return { title: 'Pocket Printer V2', url: panel.server.url };
       } catch (error) {
         if (error.code !== 'document_conflict' && panels.get(ctx.instanceId) === pending) panels.delete(ctx.instanceId);

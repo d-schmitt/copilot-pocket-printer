@@ -71,6 +71,10 @@ Discover `pocket-printer-chat` with `list_canvas_capabilities`, then open:
 {"canvasId":"pocket-printer-chat","instanceId":"walk-preview","input":{"documentId":"weekend-walk"}}
 ```
 
+Opening from the app's canvas picker needs no input: omitted input, `null` or
+`{}` uses the existing `project-chat-v2` document. An explicit `documentId`
+remains validated and selects a separate document.
+
 `documentId` is a stable agent-chosen lowercase name, 1-64 letters, digits or
 hyphens, beginning with a letter or digit. It is not a printer UUID.
 Reusing it resumes the same document, including across providers or panels.

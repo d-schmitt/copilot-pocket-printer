@@ -122,6 +122,33 @@ test('canvas actions render initial content and revision, reopen durable content
   assert.equal(restored.prepared, null);
 });
 
+test('picker opens without input reuse the default document while explicit IDs remain validated', async t => {
+  const f = await fixture(t);
+  const documents = documentStore('project-chat-v2', f.root);
+  const record = { ...(await documents.initialize()), revision: 2, document };
+  await documents.write(record);
+  const canvas = chatCanvas(undefined, { ...f.options, documents });
+  assert.deepEqual(canvas.inputSchema.required, []);
+  assert.equal(canvas.inputSchema.properties.documentId.pattern, '^[a-z0-9][a-z0-9-]{0,63}$');
+  for (const [index, input] of [undefined, null, {}, { documentId: 'project-chat-v2' }].entries()) {
+    const ctx = { instanceId: `picker-${index}`, ...(input === undefined ? {} : { input }) };
+    t.after(() => canvas.onClose(ctx));
+    const opened = await canvas.open(ctx);
+    assert.equal((await fetch(opened.url)).status, 200);
+    const state = await canvas.actions[0].handler({ ...ctx, input: {} });
+    assert.equal(state.documentId, 'project-chat-v2');
+    assert.equal(state.revision, 2);
+    assert.equal(state.flow.view, 'gallery');
+    assert.deepEqual(state.document, document);
+  }
+  for (const input of [{ documentId: '' }, { documentId: null }, { documentId: '../private' },
+    { documentId: 'UPPER' }, { unexpected: true }, [], 'project-chat-v2']) {
+    await assert.rejects(canvas.open({ instanceId: 'invalid-picker', input }));
+  }
+  assert.deepEqual(await documents.load(), record);
+  assert.deepEqual(f.calls, []);
+});
+
 test('another provider edit or rejected content invalidates approval durably before any submission', async t => {
   const f = await fixture(t);
   await f.editor.updateDocument({ revision: 1, document });
