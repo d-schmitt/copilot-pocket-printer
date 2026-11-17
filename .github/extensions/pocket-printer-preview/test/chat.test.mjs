@@ -12,6 +12,7 @@ import { CardEditor } from '../editor.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dailyFixture } from './daily-fixture.mjs';
+import { templateDocument, templateBlocks } from '../templates.mjs';
 
 const target = '11111111-2222-4333-8444-555555555555';
 const document = { version: 1, blocks: [
@@ -49,6 +50,7 @@ async function fixture(t) {
   return { root, calls, helper, ledger, options, editor };
 }
 async function prepare(editor) {
+  editor.resumePreview({});
   editor.discovery = { state: 'stopped', devices: [{ id: target, name: 'Mini Pocket Printer_BLE' }], message: 'Synthetic scan' };
   editor.selectPrinter({ id: target });
   await editor.inspectSelected({ revision: editor.revision, target });
@@ -86,7 +88,8 @@ test('canvas actions render initial content and revision, reopen durable content
   const canvas = chatCanvas(undefined, f.options);
   const ctx = { instanceId: 'walk-panel', input: { documentId: 'weekend-walk' } };
   t.after(() => canvas.onClose(ctx));
-  assert.deepEqual(canvas.actions.map(a => a.name), ['get_document', 'update_document', 'get_print_status', 'list_prints']);
+  assert.deepEqual(canvas.actions.map(a => a.name), ['get_document', 'update_document', 'request_template',
+    'list_saved_documents', 'open_saved_document', 'get_print_status', 'list_prints']);
   const invoke = (name, input = {}) => canvas.actions.find(a => a.name === name).handler({ ...ctx, input });
   const opened = await canvas.open(ctx);
   assert.equal((await invoke('get_document')).document, null);
@@ -135,7 +138,7 @@ test('another provider edit or rejected content invalidates approval durably bef
   assert.equal(f.editor.image, null);
   const restarted = new ChatDocument('weekend-walk', f.options);
   await restarted.sync();
-  assert.equal(restarted.state().document, null);
+  assert.deepEqual(restarted.state().document, { version: 1, blocks: [{ kind: 'text', text: 'Revised content' }] });
   assert.equal(restarted.state().error.code, 'invalid_document');
   assert.equal(f.calls.includes('submit_png'), false);
 });
@@ -248,7 +251,8 @@ test('original daily layout uses the same revision and approval boundary and doe
   const before = await otherStore.load();
   await f.editor.updateDocument({ revision: 1, document });
   const previous = await prepare(f.editor);
-  await f.editor.updateDocument({ revision: 2, document: dailyFixture() });
+  await f.editor.requestReplacement({ revision: 2, template: 'daily' });
+  await f.editor.resolveReplacement({ requestId: f.editor.pendingReplacement.requestId, decision: 'replace' });
   assert.equal(f.editor.state().document.layout, 'daily-card');
   assert.equal(f.editor.renderedRevision, 3);
   assert.equal(f.editor.selectedPrinter.id, target);
@@ -280,4 +284,147 @@ test('V2 entrypoint registers the dedicated canvas only', async () => {
     (_, quote, dependency) => `from ${quote}${dependency === '@github/copilot-sdk/extension' ? sdk : new URL(dependency, entry).href}${quote}`);
   await import('data:text/javascript,' + encodeURIComponent(source));
   assert.deepEqual((await import(sdk)).options.canvases.map(c => c.id), ['pocket-printer-chat']);
+});
+
+test('Focus has exactly three blank priorities; Surprise renders a meme, Easy or Medium with retained user text', async () => {
+  const focus = templateDocument('focus');
+  assert.deepEqual(focus.priorities, ['', '', '']);
+  assert.equal(templateBlocks(focus).blocks.length, 4);
+  for (const priorities of [[], ['', ''], ['', '', '', ''], ['a\nb', '', ''], ['x'.repeat(513), '', '']]) {
+    await assert.rejects(renderDocument({ ...focus, priorities }));
+  }
+  const surprise = { ...templateDocument('surprise'), message: 'A synthetic reminder' };
+  const images = [];
+  for (const seed of [0, 1, 3]) {
+    const blocks = templateBlocks(surprise, seed).blocks;
+    assert.ok(blocks.some(b => b.text === surprise.message));
+    if (!seed) assert.ok(blocks.some(b => b.kind === 'art' && b.name === 'printer'));
+    else assert.equal(blocks.find(b => b.kind === 'sudoku').difficulty, seed === 1 ? 'easy' : 'medium');
+    const bytes = await renderDocument(surprise, { surpriseSeed: seed });
+    assert.equal(inspectPng(bytes).width, 384);
+    assert.deepEqual(bytes, await renderDocument(surprise, { surpriseSeed: seed }));
+    images.push(hash(bytes));
+  }
+  assert.equal(new Set(images).size, 3);
+  await assert.rejects(renderDocument({ ...focus, priorities: ['W'.repeat(100), '', ''] }), /unbroken word/);
+});
+
+test('gallery preserves generated provenance and protects chat edits with save, replace, cancel and recoverable snapshots', async t => {
+  const f = await fixture(t), e = f.editor;
+  assert.equal(e.state().flow.view, 'gallery');
+  await e.requestReplacement({ revision: 1, template: 'focus' });
+  assert.equal(e.state().flow.view, 'preview');
+  assert.equal(e.state().flow.customized, false);
+  await e.requestReplacement({ revision: 2, template: 'daily' });
+  assert.equal(e.pendingReplacement, null, 'Untouched generated content does not prompt');
+  await e.requestReplacement({ revision: 3, template: 'focus' });
+  const customized = { version: 1, layout: 'focus', priorities: ['Call the team', 'Write the outline', 'Take a walk'] };
+  await e.updateDocument({ revision: 4, document: customized });
+  await assert.rejects(e.updateDocument({ revision: 5, document: templateDocument('daily') }), { code: 'replacement_required' });
+  await e.requestReplacement({ revision: 5, template: 'daily' });
+  assert.deepEqual(e.draft, customized);
+  await e.resolveReplacement({ requestId: e.pendingReplacement.requestId, decision: 'cancel' });
+  assert.equal(e.revision, 5);
+  await e.requestReplacement({ revision: 5, template: 'daily' });
+  await e.resolveReplacement({ requestId: e.pendingReplacement.requestId, decision: 'save' });
+  const saved = await e.documents.listSaved();
+  assert.equal(saved.length, 1);
+  assert.deepEqual((await e.documents.loadSaved(saved[0].savedId)).document, customized);
+  assert.equal(e.flow.customized, false);
+  const restarted = new ChatDocument('weekend-walk', f.options);
+  await restarted.sync();
+  assert.equal(restarted.flow.customized, false);
+  await restarted.requestReplacement({ revision: 6, savedId: saved[0].savedId }, 'saved');
+  assert.deepEqual(restarted.draft, customized);
+  assert.equal(restarted.flow.customized, true);
+  await restarted.requestReplacement({ revision: 7, template: 'surprise' });
+  await restarted.resolveReplacement({ requestId: restarted.pendingReplacement.requestId, decision: 'replace' });
+  assert.equal((await e.documents.listSaved()).length, 1);
+  assert.equal(restarted.state().flow.hidden, true);
+  assert.deepEqual(f.calls, [], 'Selection, edits, saves and restoration do not contact a helper');
+});
+
+test('failed save and concurrent edits cannot authorize a stale customized-content replacement', async t => {
+  const f = await fixture(t), e = f.editor;
+  await e.updateDocument({ revision: 1, document });
+  await e.requestReplacement({ revision: 2, template: 'focus' });
+  const requestId = e.pendingReplacement.requestId, save = e.documents.saveSnapshot;
+  e.documents.saveSnapshot = async () => { throw new Error('Synthetic disk full'); };
+  await assert.rejects(e.resolveReplacement({ requestId, decision: 'save' }), /disk full/);
+  assert.equal(e.revision, 2);
+  assert.deepEqual((await e.documents.load()).document, document);
+  e.documents.saveSnapshot = save;
+  const peer = new ChatDocument('weekend-walk', f.options);
+  await peer.sync();
+  await peer.updateDocument({ revision: 2, document });
+  await assert.rejects(e.resolveReplacement({ requestId, decision: 'replace' }), { code: 'stale_replacement' });
+  assert.deepEqual(e.draft, document);
+  assert.equal(e.pendingReplacement, null);
+});
+
+test('rejected chat edits retain customized content, block bypass and can save the last valid document', async t => {
+  const f = await fixture(t), e = f.editor;
+  const focus = { version: 1, layout: 'focus', priorities: ['Keep this priority', '', ''] };
+  await e.updateDocument({ revision: 1, document: focus });
+  await assert.rejects(e.updateDocument({ revision: 2, document: { ...focus, priorities: [] } }));
+  assert.deepEqual(e.draft, focus);
+  assert.equal(e.image, null);
+  const peer = new ChatDocument('weekend-walk', f.options);
+  await peer.sync();
+  assert.deepEqual(peer.draft, focus);
+  assert.equal(peer.image, null);
+  await assert.rejects(peer.updateDocument({ revision: 3, document: templateDocument('daily') }), { code: 'replacement_required' });
+  await peer.requestReplacement({ revision: 3, template: 'daily' });
+  await peer.resolveReplacement({ requestId: peer.pendingReplacement.requestId, decision: 'save' });
+  const snapshot = await peer.documents.loadSaved(peer.lastSavedDraft);
+  assert.deepEqual(snapshot.document, focus);
+  assert.equal(snapshot.error, null);
+  await peer.requestReplacement({ revision: 4, savedId: peer.lastSavedDraft }, 'saved');
+  assert.deepEqual(peer.draft, focus);
+  assert.equal(peer.renderedRevision, 5);
+  assert.deepEqual(f.calls, []);
+});
+
+test('Surprise rerolls and conceals every chat revision; back, reload and hidden endpoints never retain print approval', async t => {
+  const f = await fixture(t);
+  let draw = 0;
+  const canvas = chatCanvas(undefined, { ...f.options, drawSeed: () => [0, 1, 3][draw++] });
+  const ctx = { instanceId: 'surprise-test', input: { documentId: 'weekend-walk' } };
+  t.after(() => canvas.onClose(ctx));
+  const opened = await canvas.open(ctx);
+  const invoke = (name, input = {}) => canvas.actions.find(a => a.name === name).handler({ ...ctx, input });
+  const post = async (route, input) => fetch(opened.url + route, { method: 'POST',
+    headers: { Origin: new URL(opened.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  let state = await invoke('request_template', { revision: 1, template: 'surprise' });
+  assert.equal(state.flow.hidden, true);
+  assert.equal(state.image, null);
+  assert.equal((await fetch(opened.url + 'image.png?revision=2')).status, 404);
+  assert.equal((await post('inspect_for_print', { revision: 2, target })).status, 400);
+  state = await (await post('reveal_preview', { revision: 2 })).json();
+  const firstHash = state.image.sha256;
+  assert.equal((await fetch(opened.url + 'image.png?revision=2')).status, 200);
+  state = await invoke('update_document', { revision: 2, document: { version: 1, layout: 'surprise', message: 'Synthetic note' } });
+  assert.equal(state.flow.hidden, true);
+  assert.equal((await post('reveal_preview', { revision: 2 })).status, 400);
+  assert.equal((await fetch(opened.url + 'image.png?revision=3')).status, 404);
+  state = await (await post('reveal_preview', { revision: 3 })).json();
+  assert.notEqual(state.image.sha256, firstHash);
+  await post('back_to_templates', {});
+  assert.equal((await fetch(opened.url + 'image.png?revision=3')).status, 404);
+  await post('resume_preview', {});
+  state = await invoke('get_document');
+  assert.equal(state.flow.hidden, true);
+  const restarted = new ChatDocument('weekend-walk', f.options);
+  await restarted.sync();
+  restarted.resumePreview({});
+  assert.equal(restarted.state().image, null);
+  await assert.rejects(restarted.confirmPrint({}), { code: 'preview_hidden' });
+  await restarted.reveal({ revision: 3 });
+  const approval = await prepare(restarted);
+  restarted.backToTemplates({});
+  await assert.rejects(restarted.confirmPrint(approval), { code: 'preview_hidden' });
+  restarted.resumePreview({});
+  await restarted.reveal({ revision: 3 });
+  await assert.rejects(restarted.confirmPrint(approval), /approval/);
+  assert.equal(f.calls.includes('submit_png'), false);
 });

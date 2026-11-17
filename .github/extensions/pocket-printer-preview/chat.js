@@ -9,9 +9,10 @@ async function request(route, input) {
   return result;
 }
 function scanning() { return ['scanning', 'stopping'].includes(state?.discovery?.state); }
+function visible() { return (!state?.flow || state.flow.view === 'preview') && !state?.flow?.hidden && !state?.flow?.pendingReplacement; }
 function canPrint() {
   const p = state?.prepared;
-  return !busy && p && !p.claimed && p.approvalToken && decoded === p.inspectionId &&
+  return visible() && !busy && p && !p.claimed && p.approvalToken && decoded === p.inspectionId &&
     p.target === state.selectedPrinter?.id && p.revision === state.revision &&
     state.renderedRevision === state.revision && !state.error && !scanning() &&
     p.health.bluetooth === 'ready' && !p.health.safety_blocked && !p.health.active_job_id &&
@@ -23,17 +24,36 @@ function controls() {
   $('#stop').hidden = !state?.discovery?.scanId || !['scanning', 'stopping', 'error'].includes(state.discovery.state);
   $('#stop').disabled = busy;
   $('#target').disabled = busy || !state?.discovery?.devices.length;
-  $('#refresh').disabled = busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision;
+  $('#refresh').disabled = !visible() || busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision;
   $('#status').hidden = !lastJobId;
   $('#status').disabled = busy;
+  for (const id of ['template-daily', 'template-focus', 'template-surprise', 'back', 'resume', 'save-replace', 'replace', 'cancel-replace']) {
+    $(`#${id}`).disabled = busy;
+  }
+  $('#reveal').disabled = busy || state?.renderedRevision !== state?.revision;
 }
 function draw(value) {
   if (state && value.revision < state.revision) return;
+  const previousRequest = state?.flow?.pendingReplacement?.requestId;
   state = value;
-  const valid = value.image && value.renderedRevision === value.revision;
+  const flow = value.flow ?? { view: 'preview', hidden: false };
+  const pending = flow.pendingReplacement;
+  $('#gallery').hidden = flow.view !== 'gallery' || Boolean(pending);
+  $('#resume').hidden = !value.document;
+  $('#card-view').hidden = flow.view !== 'preview' || Boolean(pending);
+  $('#replacement').hidden = !pending;
+  $('#surprise-cover').hidden = !flow.hidden;
+  $('#preview-section').hidden = Boolean(flow.hidden);
+  $('#printer-section').hidden = Boolean(flow.hidden);
+  $('#chat-hint').textContent = flow.template === 'focus' ? 'Tell Copilot your three priorities to fill these lines.' :
+    flow.template === 'daily' ? 'Original daily layout. Supply your calendar and weather through chat; the starting card is a labelled synthetic example.' :
+      flow.template === 'surprise' ? 'Chat edits reroll the Surprise and hide it again.' : 'Ask in chat to change this card.';
+  $('#saved-notice').hidden = !flow.lastSavedDraft;
+  $('#saved-notice').textContent = flow.lastSavedDraft ? 'Saved privately as a draft. Ask in chat to reopen saved drafts.' : '';
+  const valid = visible() && value.image && value.renderedRevision === value.revision;
   const p = valid ? value.prepared : null;
   const key = p ? `exact:${p.inspectionId}` : valid ? `draft:${value.revision}:${value.image.sha256}` : null;
-  if (key !== imageKey) {
+  if (key !== imageKey || !valid) {
     imageKey = key; decoded = null;
     $('#preview').replaceChildren();
     if (key) {
@@ -81,6 +101,8 @@ function draw(value) {
   }
   error(value.error?.message ?? '');
   controls();
+  if (pending && pending.requestId !== previousRequest) $('#save-replace').focus();
+  else if (previousRequest && !pending) $('#back').focus();
 }
 async function operate(route, input) {
   if (busy) return;
@@ -94,7 +116,7 @@ async function operate(route, input) {
   } finally { busy = false; controls(); }
 }
 async function inspect() {
-  if (busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision) return;
+  if (!visible() || busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision) return;
   attempted = `${state.revision}:${state.selectedPrinter.id}`;
   decoded = null;
   // A refresh replaces even a failed image element, so a genuine new load is required.
@@ -102,8 +124,31 @@ async function inspect() {
   await operate('inspect_for_print', { revision: state.revision, target: state.selectedPrinter.id });
 }
 async function autoInspect() {
-  if (state?.selectedPrinter && !state.prepared && !state.error &&
+  if (visible() && state?.selectedPrinter && !state.prepared && !state.error &&
       attempted !== `${state.revision}:${state.selectedPrinter.id}`) await inspect();
+}
+for (const template of ['daily', 'focus', 'surprise']) {
+  $(`#template-${template}`).addEventListener('click', () =>
+    operate('request_template', { revision: state.revision, template }));
+}
+$('#back').addEventListener('click', async () => {
+  decoded = null; imageKey = null; attempted = null;
+  await operate('back_to_templates', {});
+});
+$('#resume').addEventListener('click', () => operate('resume_preview', {}));
+$('#reveal').addEventListener('click', async event => {
+  if (!event.isTrusted) return;
+  attempted = null;
+  await operate('reveal_preview', { revision: state.revision });
+  await autoInspect();
+});
+for (const [id, decision] of [['save-replace', 'save'], ['replace', 'replace'], ['cancel-replace', 'cancel']]) {
+  $(`#${id}`).addEventListener('click', async event => {
+    if (!event.isTrusted || !state?.flow?.pendingReplacement) return;
+    attempted = null; decoded = null;
+    await operate('resolve_replacement', { requestId: state.flow.pendingReplacement.requestId, decision });
+    await autoInspect();
+  });
 }
 $('#scan').addEventListener('click', async () => {
   decoded = null; attempted = null;

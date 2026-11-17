@@ -1,8 +1,11 @@
 import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { objectKeys, renderTemplate } from './draft.mjs';
 import { PreviewError } from './png.mjs';
-import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock } from './private-store.mjs';
+import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock, requireId } from './private-store.mjs';
 import { dailyDocumentSchema, validateDailyDocument, dailyDocumentTemplate } from './daily-document.mjs';
+import { focusSchema, surpriseSchema, templateOf, validateTemplateDocument, templateBlocks } from './templates.mjs';
 
 const textSchema = { type: 'string', minLength: 1, maxLength: 4096 };
 const genericDocumentSchema = {
@@ -22,7 +25,7 @@ const genericDocumentSchema = {
     ] } }
   }
 };
-export const documentSchema = { oneOf: [genericDocumentSchema, dailyDocumentSchema] };
+export const documentSchema = { oneOf: [genericDocumentSchema, dailyDocumentSchema, focusSchema, surpriseSchema] };
 export const documentIdSchema = { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,63}$' };
 export function requireDocumentId(id) {
   if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
@@ -68,11 +71,34 @@ export function documentTemplate(value) {
 }
 export function validateDocument(document) {
   if (document?.layout === 'daily-card') validateDailyDocument(document);
+  else if (['focus', 'surprise'].includes(document?.layout)) validateTemplateDocument(document);
   else documentTemplate(document);
 }
-export async function renderDocument(document) {
+export async function renderDocument(document, { surpriseSeed } = {}) {
   return renderTemplate(document?.layout === 'daily-card'
-    ? await dailyDocumentTemplate(document) : documentTemplate(document));
+    ? await dailyDocumentTemplate(document) : ['focus', 'surprise'].includes(document?.layout)
+      ? templateBlocks(document, surpriseSeed) : documentTemplate(document));
+}
+export function recordFlow(record) {
+  // Previously saved chat documents predate provenance; conservatively protect them as customized.
+  return record.flow ?? { template: templateOf(record.document), customized: Boolean(record.document), surpriseSeed: null };
+}
+function validateRecord(record, id) {
+  objectKeys(record, ['id', 'revision', 'document', 'error', ...(Object.hasOwn(record, 'flow') ? ['flow'] : [])]);
+  if (record.id !== id || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
+      (record.error !== null && (typeof record.error?.code !== 'string' || typeof record.error?.message !== 'string'))) {
+    throw new PreviewError('invalid_storage', 'Chat document identity or revision is invalid.');
+  }
+  if (record.document !== null) validateDocument(record.document);
+  const flow = recordFlow(record);
+  objectKeys(flow, ['template', 'customized', 'surpriseSeed']);
+  if (![null, 'custom', 'daily', 'focus', 'surprise'].includes(flow.template) ||
+      typeof flow.customized !== 'boolean' || (record.document && templateOf(record.document) !== flow.template) ||
+      (flow.template === 'surprise' ? !Number.isInteger(flow.surpriseSeed) || flow.surpriseSeed < 0 || flow.surpriseSeed > 0xffffffff
+        : flow.surpriseSeed !== null)) {
+    throw new PreviewError('invalid_storage', 'Stored template provenance or Surprise draw is invalid.');
+  }
+  return record;
 }
 
 // Separate content records, but the existing global print ledger remains the only dispatch authority.
@@ -80,23 +106,46 @@ export function documentStore(id, root = storeRoot) {
   requireDocumentId(id);
   const directory = join(root, 'chat-documents', id);
   const path = join(directory, 'document.json');
+  const savedDirectory = join(directory, 'saved');
   async function prepare() {
     await privateDirectory(root);
     await privateDirectory(join(root, 'chat-documents'));
     await privateDirectory(directory);
   }
   async function load() {
-    const record = await readRecord(path, 64 * 1024);
-    objectKeys(record, ['id', 'revision', 'document', 'error']);
-    if (record.id !== id || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
-        (record.error !== null && (typeof record.error?.code !== 'string' || typeof record.error?.message !== 'string'))) {
-      throw new PreviewError('invalid_storage', 'Chat document identity or revision is invalid.');
+    return validateRecord(await readRecord(path, 64 * 1024), id);
+  }
+  async function savedNames() {
+    await privateDirectory(savedDirectory);
+    const names = await readdir(savedDirectory);
+    if (names.some(name => !/^[a-f0-9-]{36}\.json$/.test(name)) || names.length > 20) {
+      throw new PreviewError('invalid_storage', 'Saved card storage contains unexpected files or exceeds its 20-card limit.');
     }
-    if (record.document !== null) validateDocument(record.document);
-    return record;
+    return names;
+  }
+  async function loadSaved(savedId) {
+    requireId(savedId);
+    await privateDirectory(savedDirectory);
+    return validateRecord(await readRecord(join(savedDirectory, `${savedId}.json`), 64 * 1024), id);
   }
   return {
-    load,
+    load, loadSaved,
+    async listSaved() {
+      const result = [];
+      for (const name of await savedNames()) {
+        const savedId = name.slice(0, -5), record = await loadSaved(savedId);
+        result.push({ savedId, template: recordFlow(record).template, revision: record.revision });
+      }
+      return result;
+    },
+    // Called under the document lock before replacing its current contents.
+    async saveSnapshot(record) {
+      if (!record.document) throw new PreviewError('draft_not_ready', 'Provide content before saving a draft.');
+      if ((await savedNames()).length >= 20) throw new PreviewError('storage_limit', 'This document already has 20 saved drafts. Nothing was replaced.');
+      const savedId = randomUUID();
+      await writeRecord(join(savedDirectory, `${savedId}.json`), validateRecord({ ...record, error: null }, id), { exclusive: true });
+      return savedId;
+    },
     async initialize() {
       await prepare();
       return withStoreLock(directory, async () => {
@@ -108,6 +157,6 @@ export function documentStore(id, root = storeRoot) {
       });
     },
     async locked(operation) { await prepare(); return withStoreLock(directory, operation); },
-    async write(record) { await writeRecord(path, record); }
+    async write(record) { await writeRecord(path, validateRecord(record, id)); }
   };
 }

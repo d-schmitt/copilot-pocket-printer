@@ -19,6 +19,7 @@ async function browser(input, onPost) {
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
     addEventListener(name, callback) { this.events.set(name, callback); }
+    focus() {}
   }
   const $ = name => {
     if (!nodes.has(name)) nodes.set(name, new Element());
@@ -129,4 +130,84 @@ test('poll recovery and preserved-page return reload the bitmap before restoring
   $('#preview').children[0].events.get('load')();
   assert.equal($('#print').disabled, false);
   assert.equal(ui.calls.length, 0);
+});
+
+test('gallery and concealed Surprise expose no bitmap; each edit needs a trusted reveal and a fresh exact image load', async () => {
+  const value = { ...initial(), image: null, document: { version: 1, layout: 'surprise', message: '' },
+    flow: { view: 'gallery', template: 'surprise', hidden: true, customized: false } };
+  const ui = await browser(value, async (route, body, state) => {
+    if (route === 'request_template') return { ...state, flow: { ...state.flow, view: 'preview' } };
+    if (route === 'reveal_preview') return { ...state, image: initial().image, prepared: prepared(`draw-${state.revision}`, state.revision),
+      selectedPrinter: device, flow: { ...state.flow, hidden: false } };
+    throw new Error(`Unexpected operation: ${route}`);
+  });
+  const $ = ui.$;
+  assert.equal($('#gallery').hidden, false);
+  assert.equal($('#card-view').hidden, true);
+  assert.equal($('#preview').children.length, 0);
+  await $('#template-surprise').events.get('click')();
+  assert.equal($('#gallery').hidden, true);
+  assert.equal($('#surprise-cover').hidden, false);
+  assert.equal($('#print').disabled, true);
+  await $('#reveal').events.get('click')({ isTrusted: false });
+  assert.equal(ui.calls.length, 1);
+  await $('#reveal').events.get('click')({ isTrusted: true });
+  const old = $('#preview').children[0];
+  assert.equal($('#print').disabled, true);
+  old.events.get('load')();
+  assert.equal($('#print').disabled, false);
+  ui.set({ ...value, revision: 3, renderedRevision: 3, flow: { ...value.flow, view: 'preview' } });
+  await ui.tick();
+  assert.equal($('#preview').children.length, 0);
+  old.events.get('load')();
+  assert.equal($('#print').disabled, true);
+  assert.equal($('#surprise-cover').hidden, false);
+  await $('#reveal').events.get('click')({ isTrusted: true });
+  old.events.get('load')();
+  assert.equal($('#print').disabled, true);
+  $('#preview').children[0].events.get('load')();
+  assert.equal($('#print').disabled, false);
+});
+
+test('replacement choices hide the old image and only trusted decisions reach the guarded route', async () => {
+  const value = { ...initial(), prepared: prepared(), selectedPrinter: device,
+    flow: { view: 'preview', template: 'focus', hidden: false,
+      pendingReplacement: { requestId: 'request', revision: 2, template: 'daily' } } };
+  const ui = await browser(value, async (route, body, state) => {
+    assert.equal(route, 'resolve_replacement');
+    assert.deepEqual(body, { requestId: 'request', decision: 'cancel' });
+    return { ...state, prepared: null, selectedPrinter: null, flow: { ...state.flow, pendingReplacement: null } };
+  });
+
+  assert.equal(ui.$('#replacement').hidden, false);
+  assert.equal(ui.$('#card-view').hidden, true);
+  assert.equal(ui.$('#preview').children.length, 0);
+  assert.equal(ui.$('#print').disabled, true);
+  await ui.$('#cancel-replace').events.get('click')({ isTrusted: false });
+  assert.equal(ui.calls.length, 0);
+  await ui.$('#cancel-replace').events.get('click')({ isTrusted: true });
+  assert.equal(ui.$('#replacement').hidden, true);
+  assert.equal(ui.$('#card-view').hidden, false);
+  assert.equal(ui.calls.length, 1);
+});
+
+test('Back removes the loaded bitmap and an earlier poll cannot restore it in the gallery', async () => {
+  const value = { ...initial(), prepared: prepared(), selectedPrinter: device,
+    flow: { view: 'preview', template: 'focus', hidden: false } };
+  const ui = await browser(value, async (route, body, state) => {
+    assert.equal(route, 'back_to_templates');
+    return { ...state, image: null, prepared: null, flow: { ...state.flow, view: 'gallery' } };
+  });
+  const old = ui.$('#preview').children[0];
+  old.events.get('load')();
+  let release;
+  ui.get(() => new Promise(resolve => { release = () => resolve({ ok: true, json: async () => value }); }));
+  const poll = ui.tick();
+  await ui.$('#back').events.get('click')();
+  assert.equal(ui.$('#preview').children.length, 0);
+  release(); await poll;
+  old.events.get('load')();
+  assert.equal(ui.$('#gallery').hidden, false);
+  assert.equal(ui.$('#print').disabled, true);
+  assert.equal(ui.$('#preview').children.length, 0);
 });

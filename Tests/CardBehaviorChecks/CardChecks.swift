@@ -161,6 +161,7 @@ public struct CardChecks {
     private func variants() throws {
         for block: [String: Any] in [
             ["kind": "art", "name": "garden"],
+            ["kind": "art", "name": "printer"],
             ["kind": "sudoku", "difficulty": "medium", "seed": 3],
             text("The pencil joined the garden club. It wanted to draw more flowers.")
         ] {

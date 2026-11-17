@@ -19,7 +19,7 @@ FILES = ("extension.mjs", "editor.mjs", "editor.js", "editor.html", "editor.css"
          "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
          "png.mjs", "view.css")
 V2_FILES = ("editor.mjs", "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
-            "png.mjs", "document.mjs", "daily-document.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css")
+            "png.mjs", "document.mjs", "daily-document.mjs", "templates.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css")
 DAILY_FILES = ("__init__.py", "model.py", "template.py", "canvas.py")
 RELOCATIONS = {
     "draft.mjs": ("../../../.build/debug/card-renderer", "./runtime/card-renderer"),
@@ -123,6 +123,16 @@ def verify(target, node, v2=False):
               assert.equal(state.renderedRevision, state.revision);
               assert.equal(state.prepared, null);
             }
+            state = await canvas.actions.find(a => a.name === 'request_template').handler({
+              ...ctx, input: { revision: state.revision, template: 'daily' }
+            });
+            assert.ok(state.flow.pendingReplacement);
+            const replacement = await fetch(panel.url + 'resolve_replacement', {
+              method: 'POST', headers: { 'Content-Type': 'application/json', Origin: new URL(panel.url).origin },
+              body: JSON.stringify({ requestId: state.flow.pendingReplacement.requestId, decision: 'replace' })
+            });
+            assert.equal(replacement.status, 200);
+            state = await replacement.json();
             for (const bottom of ['joke', 'sudoku-easy']) {
               state = await action.handler({ ...ctx, input: { revision: state.revision, document: {
                 version: 1, layout: 'daily-card', config: {

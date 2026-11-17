@@ -1,11 +1,34 @@
 # Chat-to-print V2
 
-Describe text or a checklist in normal Copilot chat. The agent sends a bounded
+Start with **Daily card**, **Focus list** or **Surprise** in the gallery, then
+describe changes in normal Copilot chat. The agent sends a bounded
 document to the canvas; the existing offline renderer wraps it at readable,
 fixed sizes. Ask in chat for revisions. There is no second chat, content form,
 external generation service or HTML renderer. Generic text/checklists are not
 mapped into daily-card fields. An explicit original-daily-card document can reuse
-that existing layout without changing the generic defaults.
+that existing layout without changing the generic defaults. Selecting a card
+hides the gallery; **Back to templates** returns to it. Reopening starts in the
+gallery, with **Continue current card** for retained content.
+
+Daily card starts with a clearly labelled synthetic example, using the original
+meeting-time, sunrise/sunset, walk and joke composition. Chat can replace the
+offline inputs and choose the existing Easy/Medium Sudoku instead of a joke.
+Focus starts with exactly three empty numbered priority lines.
+Surprise draws an original classic-caption meme with a small printer doodle, or
+a real seeded Sudoku with randomized Easy/Medium difficulty.
+
+Surprise remains concealed until the user's **Reveal preview** click. Every
+chat revision makes a fresh draw and hides it again, including an unchanged
+message. Returning to the gallery or reopening also requires reveal again,
+but preserves the stored draw. Nothing is printed by revealing.
+
+Changing templates only asks for confirmation when the current card contains
+chat-provided or chat-edited content. The choices are **Save as draft**,
+**Replace without saving** and **Cancel**. Untouched/generated template cards
+switch directly. Legacy V2 content is conservatively considered customized.
+The replacement question is bound to the current revision; a concurrent edit
+invalidates it. Saved snapshots are private and recoverable through chat,
+not a new draft-library UI.
 
 V2 is an **additional, separately installed surface**. The V1 entrypoint, open
 panels, saved drafts and helper are not replaced. Source modules live alongside
@@ -79,8 +102,39 @@ Call `get_document` with `{}` and use its current `revision`:
 To revise, call `get_document`, then `update_document` on the **same instance**
 with the returned revision and complete replacement document. The canvas updates
 automatically. Preserve the user's content; do not summarize, crop or shrink it
-to fit. The schema accepts only headings, text and checklist items with explicit
-boolean `checked`. It rejects extra fields.
+to fit. The generic schema accepts only headings, text and checklist items with
+explicit boolean `checked`. It rejects extra fields.
+
+The additional `update_document` shapes are:
+
+```json
+{"version":1,"layout":"focus","priorities":["First priority","",""]}
+```
+
+```json
+{"version":1,"layout":"surprise","message":"An optional short personal note"}
+```
+
+Focus requires exactly three strings. A blank string keeps an empty line.
+Each priority and the optional Surprise message is a single line of at most
+512 UTF-8 bytes. Text wraps without shrinking; overlong unbroken words fail
+explicitly. A Surprise note is retained in the printed card, not silently
+substituted for the random draw. Seeds are server-generated and retained with
+the document, not accepted from chat for this variant.
+
+`request_template` takes `{"revision":N,"template":"daily"|"focus"|"surprise"}`.
+Use it before changing document variants. It either selects a generated card
+or returns `flow.pendingReplacement`; stop and let the user answer in the
+canvas. `update_document` cannot bypass the customized-content replacement
+question. All chat updates mark content as customized; generated defaults do
+not. Re-selecting the active template resumes it without erasing its contents.
+
+`list_saved_documents` with `{}` returns saved IDs, templates and revisions.
+`open_saved_document` takes `{"revision":N,"savedId":"<returned UUID>"}` and uses
+the same guarded replacement flow. Snapshots retain their draw and provenance,
+never a selection or approval. Up to 20 snapshots per document are retained;
+a failed/full save leaves the current document intact. No automatic deletion.
+There is no SDK action to resolve a replacement, reveal Surprise or print.
 
 Other read-only actions: `get_print_status` with `{"jobId":"<retained UUID>"}`
 and `list_prints` with `{}`. **There is no agent-facing print action or approval
@@ -130,7 +184,7 @@ offline model, then passes its unmodified output to the existing renderer.
 It preserves the original 24-dot title, 18-dot section headings, 16-dot body,
 13-dot annotations, separator rules, aligned header and measured compact rows.
 `bottom` is `joke`, `sudoku-easy` or `sudoku-medium`; Sudoku uses the existing
-seeded generator, not a text approximation. There is no new form or template menu.
+seeded generator, not a text approximation. There is no content-editing form.
 Rendering is bounded by the same height and PNG limits, with no cropping.
 
 This optional path needs Python 3.9+ with standard-library timezone support.
@@ -151,6 +205,11 @@ Print stays disabled until that image loads. Estimated length follows the
 existing 203-dpi convention, including 80 dots of feed:
 `(height + 80) / 203 * 25.4` mm. Physical length is approximate.
 
+Gallery, replacement-question and concealed-Surprise states serve neither the
+draft nor inspected image. They invalidate print approval. Both inspection and
+confirmation independently enforce the visible-preview gate. A late image load,
+render or poll cannot restore approval for hidden or revised content.
+
 The user's trusted **Print** click submits the inspected image to the selected
 printer once. Existing independent helper launch and native opt-in are unchanged.
 Native confirmation mode still requires its helper approval. Transport submission
@@ -164,6 +223,9 @@ locks through print admission. This prevents a second provider from editing
 content between revision validation and durable dispatch claim. Images,
 selection and approval are deliberately not restored after provider restart.
 Rejected content invalidates the previous printable revision across panels.
+Schema-rejected edits retain the last valid document for recovery and guarded
+saving, with an explicit error and no printable image. They do not clear its
+customized status or bypass the replacement question.
 No drafts, claims or receipts are automatically deleted.
 
 ## Bounds and recovery
@@ -200,6 +262,11 @@ load, trusted click, cross-provider document locking, V1/V2 shared dispatch
 identity and standalone packaging. Actual app discovery/open/action validation
 requires installation/reload approval; direct factory tests are not proof that
 the canvas is registered in the current Project.
+
+Gallery regressions additionally cover generated/customized provenance,
+save/replace/cancel, failed saves, stale replacement decisions, retained
+Surprise draws, re-reveal on edit/reopen, hidden image endpoints, and exact-image
+load after reveal. All renderer examples and browser mockups use synthetic data.
 
 Daily-layout regressions compare PNG bytes against the original Python template
 for identical synthetic inputs, including joke and both Sudoku difficulties,

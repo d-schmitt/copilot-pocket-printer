@@ -1,7 +1,9 @@
 import { CardEditor } from './editor.mjs';
+import { randomInt, randomUUID } from 'node:crypto';
 import { objectKeys } from './draft.mjs';
 import { PreviewError } from './png.mjs';
-import { documentSchema, documentIdSchema, requireDocumentId, validateDocument, renderDocument, documentStore } from './document.mjs';
+import { documentSchema, documentIdSchema, requireDocumentId, validateDocument, renderDocument, documentStore, recordFlow } from './document.mjs';
+import { templateNames, templateOf, templateDocument } from './templates.mjs';
 import { servePanel, readJson } from './loopback.mjs';
 
 export class ChatDocument extends CardEditor {
@@ -11,10 +13,28 @@ export class ChatDocument extends CardEditor {
     this.documents = options.documents ?? documentStore(id);
     this.draft = null;
     this.revision = 0;
+    this.flow = { template: null, customized: false, surpriseSeed: null };
+    this.view = 'gallery';
+    this.revealedRevision = null;
+    this.pendingReplacement = null;
+    this.lastSavedDraft = null;
+    this.drawSeed = options.drawSeed ?? (() => randomInt(0x100000000));
+    if (!options.render) this.render = document => renderDocument(document, { surpriseSeed: this.flow.surpriseSeed });
+  }
+  visible() {
+    return this.view === 'preview' && !this.pendingReplacement &&
+      (this.flow.template !== 'surprise' || this.revealedRevision === this.revision);
+  }
+  requireVisible() {
+    if (!this.visible()) throw new PreviewError('preview_hidden', 'Open this card and reveal its current preview before preparing or approving a print.');
   }
   state(browser = false) {
     const { draft, saved, ...state } = super.state(browser);
-    return { ...state, documentId: this.documentId, document: draft };
+    return { ...state, ...(this.visible() ? {} : { image: null, prepared: null }),
+      documentId: this.documentId, document: draft,
+      flow: { template: this.flow.template, customized: this.flow.customized, view: this.view,
+        hidden: this.flow.template === 'surprise' && this.revealedRevision !== this.revision,
+        pendingReplacement: this.pendingReplacement, lastSavedDraft: this.lastSavedDraft } };
   }
   fail(error) {
     if (!(error instanceof PreviewError)) {
@@ -35,6 +55,9 @@ export class ChatDocument extends CardEditor {
     this.changed();
     this.revision = record.revision;
     this.draft = record.document;
+    this.flow = recordFlow(record);
+    this.revealedRevision = null;
+    this.pendingReplacement = null;
     this.error = record.error;
     if (this.draft && !this.error) await this.refresh();
   }
@@ -46,24 +69,113 @@ export class ChatDocument extends CardEditor {
     await this.documents.locked(async () => {
       const previous = await this.documents.load();
       if (input.revision !== previous.revision) throw new PreviewError('stale_document', 'This document changed in another panel. Read get_document before revising it.');
-      let document = null, error = null;
+      const previousFlow = recordFlow(previous);
+      if (previousFlow.customized && previousFlow.template && previousFlow.template !== templateOf(input.document)) {
+        throw new PreviewError('replacement_required', 'This card has chat edits. Request a template change and let the user choose Save as draft, Replace without saving or Cancel.');
+      }
+      let document = previous.document, error = null;
       try { validateDocument(input.document); document = structuredClone(input.document); }
       catch (failure) {
         if (!(failure instanceof PreviewError)) throw failure;
-        error = { code: failure.code, message: failure.message };
+        error = { code: failure.code, message: `${failure.message} Previous content is retained, but its preview is invalidated.` };
       }
-      record = { id: this.documentId, revision: previous.revision + 1, document, error };
-      // Persist invalidation too: another panel must never print the previous content after a rejected edit.
+      const template = document ? templateOf(document) : previousFlow.template;
+      record = { id: this.documentId, revision: previous.revision + 1, document, error,
+        flow: { template, customized: true, surpriseSeed: template === 'surprise' ? this.drawSeed() : null } };
+      // Rejected edits invalidate printing durably without destroying recoverable customized content.
       await this.documents.write(record);
       this.invalidatePrint();
     });
+    this.view = 'preview';
     await this.adopt(record);
     if (this.error) throw new PreviewError(this.error.code, this.error.message);
+    return this.state();
+  }
+  async requestReplacement(input, kind = 'template') {
+    this.mutable();
+    objectKeys(input, kind === 'template' ? ['revision', 'template'] : ['revision', 'savedId']);
+    if (kind === 'template' && !templateNames.includes(input.template)) {
+      throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Surprise.');
+    }
+    let record;
+    await this.documents.locked(async () => {
+      const previous = await this.documents.load();
+      if (input.revision !== previous.revision) throw new PreviewError('stale_document', 'The card changed. Read the latest revision before switching.');
+      await this.adopt(previous);
+      this.invalidatePrint();
+      this.revealedRevision = null;
+      if (kind === 'template' && this.flow.template === input.template && this.draft) {
+        this.pendingReplacement = null; this.view = 'preview'; return;
+      }
+      const request = { requestId: randomUUID(), revision: previous.revision, kind,
+        ...(kind === 'template' ? { template: input.template } : { savedId: input.savedId }) };
+      if (kind === 'saved') await this.documents.loadSaved(input.savedId);
+      if (recordFlow(previous).customized) { this.pendingReplacement = request; return; }
+      record = await this.replacementRecord(previous, request);
+      await this.documents.write(record);
+    });
+    if (record) { this.view = 'preview'; await this.adopt(record); }
+    return this.state();
+  }
+  async replacementRecord(previous, request) {
+    const saved = request.kind === 'saved' ? await this.documents.loadSaved(request.savedId) : null;
+    const document = saved ? saved.document : templateDocument(request.template);
+    const flow = saved ? recordFlow(saved) :
+      { template: request.template, customized: false, surpriseSeed: request.template === 'surprise' ? this.drawSeed() : null };
+    return { id: this.documentId, revision: previous.revision + 1, document, error: saved?.error ?? null, flow };
+  }
+  async resolveReplacement(input) {
+    this.mutable(); objectKeys(input, ['requestId', 'decision']);
+    const request = this.pendingReplacement;
+    if (!request || request.requestId !== input.requestId || !['save', 'replace', 'cancel'].includes(input.decision)) {
+      throw new PreviewError('replacement_required', 'Choose an option for the current replacement prompt.');
+    }
+    if (input.decision === 'cancel') {
+      this.pendingReplacement = null; this.view = this.draft ? 'preview' : 'gallery';
+      return this.state();
+    }
+    let record;
+    await this.documents.locked(async () => {
+      const previous = await this.documents.load();
+      if (previous.revision !== request.revision) {
+        await this.adopt(previous);
+        throw new PreviewError('stale_replacement', 'The card changed after the question was shown. Choose a template again.');
+      }
+      if (input.decision === 'save') this.lastSavedDraft = await this.documents.saveSnapshot(previous);
+      record = await this.replacementRecord(previous, request);
+      await this.documents.write(record);
+      this.invalidatePrint();
+    });
+    this.view = 'preview'; await this.adopt(record);
+    return this.state();
+  }
+  backToTemplates(input) {
+    this.mutable(); objectKeys(input, []);
+    this.view = 'gallery'; this.revealedRevision = null; this.pendingReplacement = null;
+    this.invalidatePrint();
+    return this.state();
+  }
+  resumePreview(input) {
+    this.mutable(); objectKeys(input, []);
+    if (!this.draft) throw new PreviewError('document_required', 'Choose a template first.');
+    this.view = 'preview'; this.pendingReplacement = null;
+    return this.state();
+  }
+  async reveal(input) {
+    this.mutable(); objectKeys(input, ['revision']);
+    await this.sync();
+    if (this.view !== 'preview' || this.pendingReplacement || input.revision !== this.revision ||
+        this.flow.template !== 'surprise' || this.renderedRevision !== this.revision || !this.image) {
+      throw new PreviewError('preview_not_ready', 'Wait for the current Surprise to render before revealing it.');
+    }
+    this.revealedRevision = this.revision;
+    this.error = null;
     return this.state();
   }
   async inspectSelected(input) {
     return this.documents.locked(async () => {
       await this.sync();
+      this.requireVisible();
       if (!this.selectedPrinter || input.target !== this.selectedPrinter.id) {
         throw new PreviewError('printer_required', 'Select a discovered printer in this panel first.');
       }
@@ -77,6 +189,7 @@ export class ChatDocument extends CardEditor {
     // Keep the content revision locked through the shared durable claim boundary across all providers.
     return this.documents.locked(async () => {
       await this.sync();
+      this.requireVisible();
       if (input.target !== this.selectedPrinter?.id) throw new PreviewError('stale_approval', 'The selected printer changed.');
       return super.confirmPrint(input);
     });
@@ -94,6 +207,9 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   async function invoke(editor, name, input) {
     if (name === 'update_document') return editor.updateDocument(input);
     if (name === 'get_document') { objectKeys(input, []); return editor.sync(); }
+    if (name === 'request_template') return editor.requestReplacement(input);
+    if (name === 'list_saved_documents') { objectKeys(input, []); return editor.documents.locked(() => editor.documents.listSaved()); }
+    if (name === 'open_saved_document') return editor.requestReplacement(input, 'saved');
     if (name === 'get_print_status') {
       objectKeys(input, ['jobId']);
       editor.job = await editor.printing.status(input.jobId);
@@ -104,14 +220,19 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   }
   const actions = [
     ['get_document', 'Read the document, revision and preview state before making a revision. Never prints.', {}],
-    ['update_document', 'Replace the document at its current revision: text/checklist blocks, or layout daily-card with bounded offline inputs for the original typography. Preserve content; never summarize to fit. Never prints.',
+    ['update_document', 'Revise the active card using daily-card offline inputs, focus with exactly three priorities, surprise with an optional message, or generic text/checklist blocks. Chat edits customize content; Surprise rerolls and hides until user reveal. Request template changes separately. Never prints.',
       { revision: { type: 'integer', minimum: 1 }, document: documentSchema }],
+    ['request_template', 'Choose Daily card, Focus list or Surprise. Customized cards require a user decision in the canvas before replacement.',
+      { revision: { type: 'integer', minimum: 1 }, template: { enum: templateNames } }],
+    ['list_saved_documents', 'List private saved card snapshots for this document. Never prints.', {}],
+    ['open_saved_document', 'Open a saved card snapshot; prompts in the canvas before replacing chat-customized content.',
+      { revision: { type: 'integer', minimum: 1 }, savedId: { type: 'string', pattern: '^[a-f0-9-]{36}$' } }],
     ['get_print_status', 'Query a retained job without retrying or submitting it.', { jobId: { type: 'string', pattern: '^[a-f0-9-]{36}$' } }],
     ['list_prints', 'Read retained print IDs for recovery. Never submits or deletes.', {}]
   ];
   return {
     id: 'pocket-printer-chat', displayName: 'Pocket Printer V2',
-    description: 'Describe text or checklists in Copilot chat, update this document, then let the user review one exact preview and click Print.',
+    description: 'Choose Daily card, Focus list or Surprise, customize in chat, and let the user reveal and review the exact preview before Print.',
     inputSchema: shape({ documentId: documentIdSchema }),
     actions: actions.map(([name, description, properties]) => ({
       name, description, inputSchema: shape(properties),
@@ -137,14 +258,19 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
             get: async (route, query) => {
               await editor.sync();
               if (route === 'state') return { type: 'application/json', body: JSON.stringify(editor.state(true)) };
-              if (route === 'image.png' && editor.image && String(editor.renderedRevision) === query.get('revision')) {
+              if (route === 'image.png' && editor.visible() && editor.image && String(editor.renderedRevision) === query.get('revision')) {
                 return { type: 'image/png', body: editor.image };
               }
-              if (route === 'print-preview.png' && editor.prepared?.inspectionId === query.get('inspection')) {
+              if (route === 'print-preview.png' && editor.visible() && editor.prepared?.inspectionId === query.get('inspection')) {
                 return { type: 'image/png', body: Buffer.from(editor.prepared.intent.preview, 'base64') };
               }
             },
             post: Object.fromEntries([
+              ['request_template', input => editor.requestReplacement(input)],
+              ['resolve_replacement', input => editor.resolveReplacement(input)],
+              ['back_to_templates', input => editor.backToTemplates(input)],
+              ['resume_preview', input => editor.resumePreview(input)],
+              ['reveal_preview', input => editor.reveal(input)],
               ['start_scan', input => editor.startScan(input)],
               ['scan_status', input => editor.scanStatus(input)],
               ['stop_scan', input => editor.scanStatus(input, true)],
