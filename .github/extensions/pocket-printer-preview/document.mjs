@@ -1,0 +1,104 @@
+import { join } from 'node:path';
+import { objectKeys, renderTemplate } from './draft.mjs';
+import { PreviewError } from './png.mjs';
+import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock } from './private-store.mjs';
+
+const textSchema = { type: 'string', minLength: 1, maxLength: 4096 };
+export const documentSchema = {
+  type: 'object', additionalProperties: false, required: ['version', 'blocks'],
+  properties: {
+    version: { const: 1 },
+    blocks: { type: 'array', minItems: 1, maxItems: 64, items: { oneOf: [
+      { type: 'object', additionalProperties: false, required: ['kind', 'text'],
+        properties: { kind: { enum: ['heading', 'text'] }, text: textSchema } },
+      { type: 'object', additionalProperties: false, required: ['kind', 'items'],
+        properties: { kind: { const: 'checklist' }, items: {
+          type: 'array', minItems: 1, maxItems: 64, items: {
+            type: 'object', additionalProperties: false, required: ['text', 'checked'],
+            properties: { text: textSchema, checked: { type: 'boolean' } }
+          }
+        } } }
+    ] } }
+  }
+};
+export const documentIdSchema = { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,63}$' };
+export function requireDocumentId(id) {
+  if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+    throw new PreviewError('invalid_document_id', 'Use a stable document name of 1-64 lowercase letters, digits or hyphens.');
+  }
+}
+function text(value, limit = 4096) {
+  if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > limit ||
+      /[\x00-\x08\x0b-\x1f\x7f]/.test(value)) {
+    throw new PreviewError('invalid_document', `Text must contain 1-${limit} UTF-8 bytes with no control characters except newlines and tabs.`);
+  }
+  return value;
+}
+export function documentTemplate(value) {
+  objectKeys(value, ['version', 'blocks']);
+  if (value.version !== 1 || !Array.isArray(value.blocks) || value.blocks.length < 1 || value.blocks.length > 64) {
+    throw new PreviewError('invalid_document', 'Use version 1 and 1-64 heading, text or checklist blocks.');
+  }
+  const blocks = [];
+  for (const block of value.blocks) {
+    if (block?.kind === 'heading' || block?.kind === 'text') {
+      objectKeys(block, ['kind', 'text']);
+      // The existing 18-dot preset keeps thin strokes readable without any fit-to-page shrinking.
+      blocks.push({ kind: 'text', text: text(block.text), style: block.kind === 'heading' ? 'title' : 'heading' });
+    } else if (block?.kind === 'checklist') {
+      objectKeys(block, ['kind', 'items']);
+      if (!Array.isArray(block.items) || block.items.length < 1 || block.items.length > 64) {
+        throw new PreviewError('invalid_document', 'A checklist needs 1-64 items.');
+      }
+      for (const item of block.items) {
+        objectKeys(item, ['text', 'checked']);
+        if (typeof item.checked !== 'boolean') throw new PreviewError('invalid_document', 'Checklist checked must be true or false.');
+        blocks.push({ kind: 'text', text: `${item.checked ? '[x]' : '[ ]'} ${text(item.text, 4092)}`, style: 'heading' });
+      }
+    } else throw new PreviewError('invalid_document', 'Only headings, plain text and checklists are supported.');
+  }
+  const template = { version: 1, blocks };
+  if (blocks.length > 128 || Buffer.byteLength(JSON.stringify(template)) > 60 * 1024 ||
+      Buffer.byteLength(JSON.stringify(value)) > 60 * 1024) {
+    throw new PreviewError('document_too_large', 'Use fewer items or less text (128 rendered blocks and 60 KiB maximum). Nothing was shortened.');
+  }
+  return template;
+}
+export async function renderDocument(document) { return renderTemplate(documentTemplate(document)); }
+
+// Separate content records, but the existing global print ledger remains the only dispatch authority.
+export function documentStore(id, root = storeRoot) {
+  requireDocumentId(id);
+  const directory = join(root, 'chat-documents', id);
+  const path = join(directory, 'document.json');
+  async function prepare() {
+    await privateDirectory(root);
+    await privateDirectory(join(root, 'chat-documents'));
+    await privateDirectory(directory);
+  }
+  async function load() {
+    const record = await readRecord(path, 64 * 1024);
+    objectKeys(record, ['id', 'revision', 'document', 'error']);
+    if (record.id !== id || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
+        (record.error !== null && (typeof record.error?.code !== 'string' || typeof record.error?.message !== 'string'))) {
+      throw new PreviewError('invalid_storage', 'Chat document identity or revision is invalid.');
+    }
+    if (record.document !== null) documentTemplate(record.document);
+    return record;
+  }
+  return {
+    load,
+    async initialize() {
+      await prepare();
+      return withStoreLock(directory, async () => {
+        try { return await load(); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const record = { id, revision: 1, document: null, error: null };
+        await writeRecord(path, record, { exclusive: true });
+        return record;
+      });
+    },
+    async locked(operation) { await prepare(); return withStoreLock(directory, operation); },
+    async write(record) { await writeRecord(path, record); }
+  };
+}
