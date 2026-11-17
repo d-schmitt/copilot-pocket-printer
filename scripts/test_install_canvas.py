@@ -81,6 +81,10 @@ class CanvasInstallationTests(unittest.TestCase):
         self.assertIn("chatCanvas", (target / "extension.mjs").read_text())
         self.assertIn("'Copilot Pocket Printer Canvas'", (target / "private-store.mjs").read_text())
         self.assertFalse((target / "editor.html").exists())
+        self.assertEqual({path.name for path in (target / "runtime/daily_card").iterdir()}, set(installer.DAILY_FILES))
+        for file in installer.DAILY_FILES:
+            self.assertEqual((target / "runtime/daily_card" / file).read_bytes(),
+                             (installer.ROOT / "daily_card" / file).read_bytes())
 
     def test_staging_overlap_protects_both_installed_versions_before_mutation(self):
         self.install()

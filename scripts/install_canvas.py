@@ -19,7 +19,8 @@ FILES = ("extension.mjs", "editor.mjs", "editor.js", "editor.html", "editor.css"
          "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
          "png.mjs", "view.css")
 V2_FILES = ("editor.mjs", "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
-            "png.mjs", "document.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css")
+            "png.mjs", "document.mjs", "daily-document.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css")
+DAILY_FILES = ("__init__.py", "model.py", "template.py", "canvas.py")
 RELOCATIONS = {
     "draft.mjs": ("../../../.build/debug/card-renderer", "./runtime/card-renderer"),
     "printing.mjs": ("../../../bridge/ipc.mjs", "./runtime/ipc.mjs"),
@@ -122,6 +123,20 @@ def verify(target, node, v2=False):
               assert.equal(state.renderedRevision, state.revision);
               assert.equal(state.prepared, null);
             }
+            for (const bottom of ['joke', 'sudoku-easy']) {
+              state = await action.handler({ ...ctx, input: { revision: state.revision, document: {
+                version: 1, layout: 'daily-card', config: {
+                  location: 'Sampletown', latitude: 0, longitude: 0, timezone: 'Europe/Berlin',
+                  work_start: '08:00', work_end: '17:00', lunch_start: '12:00', lunch_end: '13:00'
+                }, date: '2026-11-17', now: '2026-11-17T06:00:00+01:00',
+                calendar: { state: 'unavailable' }, weather: { state: 'unavailable' },
+                bottom, seed: 17, synthetic: true
+              } } });
+              assert.equal(state.error, null);
+              assert.equal(state.image.width, 384);
+              assert.equal(state.renderedRevision, state.revision);
+              assert.equal(state.prepared, null);
+            }
             for (const asset of ['', 'chat.js', 'chat.css', 'image.png?revision=' + state.revision]) {
               assert.equal((await fetch(panel.url + asset)).status, 200, 'Missing chat asset: ' + asset);
             }
@@ -159,10 +174,22 @@ def package(source, renderer, ipc, target, node, v2=False):
             if text.count(old) != 1:
                 raise InstallError(f"Canvas relocation contract changed in {file}; nothing was installed.")
             path.write_text(text.replace(old, new))
+        if v2:
+            path = candidate / "daily-document.mjs"
+            text = path.read_text()
+            old = "new URL('../../../', import.meta.url)"
+            if text.count(old) != 1:
+                raise InstallError("Daily-card relocation contract changed; nothing was installed.")
+            path.write_text(text.replace(old, "new URL('./runtime/', import.meta.url)"))
         runtime = candidate / "runtime"
         runtime.mkdir(mode=0o700)
         shutil.copy2(renderer, runtime / "card-renderer")
         shutil.copy2(ipc, runtime / "ipc.mjs")
+        if v2:
+            daily = runtime / "daily_card"
+            daily.mkdir(mode=0o700)
+            for file in DAILY_FILES:
+                shutil.copy2(safe_path(ROOT / "daily_card" / file), daily / file)
         verify(candidate, node, v2=v2)
         saved = {"format": 1, "extension": name, "entries": inventory(candidate)}
         (candidate / MANIFEST).write_text(json.dumps(saved, indent=2, sort_keys=True) + "\n")

@@ -1,7 +1,7 @@
 import { CardEditor } from './editor.mjs';
 import { objectKeys } from './draft.mjs';
 import { PreviewError } from './png.mjs';
-import { documentSchema, documentIdSchema, requireDocumentId, documentTemplate, renderDocument, documentStore } from './document.mjs';
+import { documentSchema, documentIdSchema, requireDocumentId, validateDocument, renderDocument, documentStore } from './document.mjs';
 import { servePanel, readJson } from './loopback.mjs';
 
 export class ChatDocument extends CardEditor {
@@ -47,7 +47,7 @@ export class ChatDocument extends CardEditor {
       const previous = await this.documents.load();
       if (input.revision !== previous.revision) throw new PreviewError('stale_document', 'This document changed in another panel. Read get_document before revising it.');
       let document = null, error = null;
-      try { documentTemplate(input.document); document = structuredClone(input.document); }
+      try { validateDocument(input.document); document = structuredClone(input.document); }
       catch (failure) {
         if (!(failure instanceof PreviewError)) throw failure;
         error = { code: failure.code, message: failure.message };
@@ -104,7 +104,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   }
   const actions = [
     ['get_document', 'Read the document, revision and preview state before making a revision. Never prints.', {}],
-    ['update_document', 'Replace the complete text/checklist document at its current revision. Preserve all requested content; never summarize to fit. Renders offline, never prints.',
+    ['update_document', 'Replace the document at its current revision: text/checklist blocks, or layout daily-card with bounded offline inputs for the original typography. Preserve content; never summarize to fit. Never prints.',
       { revision: { type: 'integer', minimum: 1 }, document: documentSchema }],
     ['get_print_status', 'Query a retained job without retrying or submitting it.', { jobId: { type: 'string', pattern: '^[a-f0-9-]{36}$' } }],
     ['list_prints', 'Read retained print IDs for recovery. Never submits or deletes.', {}]

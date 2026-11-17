@@ -11,6 +11,7 @@ import { inspectPng } from '../png.mjs';
 import { CardEditor } from '../editor.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { dailyFixture } from './daily-fixture.mjs';
 
 const target = '11111111-2222-4333-8444-555555555555';
 const document = { version: 1, blocks: [
@@ -236,6 +237,35 @@ test('separate provider process edits invalidate approvals and cannot write acro
   };
   await f.editor.confirmPrint(ready);
   assert.equal(f.calls.filter(c => c === 'submit_png').length, 1);
+});
+
+test('original daily layout uses the same revision and approval boundary and does not change other documents', async t => {
+  const f = await fixture(t);
+  const otherStore = documentStore('another-document', f.root);
+  const other = new ChatDocument('another-document', { documents: otherStore });
+  await other.adopt(await otherStore.initialize());
+  await other.updateDocument({ revision: 1, document });
+  const before = await otherStore.load();
+  await f.editor.updateDocument({ revision: 1, document });
+  const previous = await prepare(f.editor);
+  await f.editor.updateDocument({ revision: 2, document: dailyFixture() });
+  assert.equal(f.editor.state().document.layout, 'daily-card');
+  assert.equal(f.editor.renderedRevision, 3);
+  assert.equal(f.editor.selectedPrinter.id, target);
+  await assert.rejects(f.editor.confirmPrint(previous), /approval/);
+  const approval = await prepare(f.editor);
+  const invalid = dailyFixture(); invalid.date = '2026-02-30';
+  await assert.rejects(f.editor.updateDocument({ revision: 3, document: invalid }), /Invalid date/);
+  assert.equal(f.editor.image, null);
+  await assert.rejects(f.editor.confirmPrint(approval), /approval/);
+  await assert.rejects(f.editor.updateDocument({ revision: 3, document: dailyFixture() }), /changed in another panel/);
+  await f.editor.updateDocument({ revision: 4, document: dailyFixture('sudoku-easy') });
+  const reopened = new ChatDocument('weekend-walk', f.options);
+  await reopened.sync();
+  assert.equal(reopened.renderedRevision, 5);
+  assert.deepEqual(reopened.image, f.editor.image);
+  assert.deepEqual(await otherStore.load(), before);
+  assert.equal(f.calls.includes('submit_png'), false);
 });
 
 test('V2 entrypoint registers the dedicated canvas only', async () => {

@@ -2,9 +2,10 @@ import { join } from 'node:path';
 import { objectKeys, renderTemplate } from './draft.mjs';
 import { PreviewError } from './png.mjs';
 import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock } from './private-store.mjs';
+import { dailyDocumentSchema, validateDailyDocument, dailyDocumentTemplate } from './daily-document.mjs';
 
 const textSchema = { type: 'string', minLength: 1, maxLength: 4096 };
-export const documentSchema = {
+const genericDocumentSchema = {
   type: 'object', additionalProperties: false, required: ['version', 'blocks'],
   properties: {
     version: { const: 1 },
@@ -21,6 +22,7 @@ export const documentSchema = {
     ] } }
   }
 };
+export const documentSchema = { oneOf: [genericDocumentSchema, dailyDocumentSchema] };
 export const documentIdSchema = { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,63}$' };
 export function requireDocumentId(id) {
   if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
@@ -64,7 +66,14 @@ export function documentTemplate(value) {
   }
   return template;
 }
-export async function renderDocument(document) { return renderTemplate(documentTemplate(document)); }
+export function validateDocument(document) {
+  if (document?.layout === 'daily-card') validateDailyDocument(document);
+  else documentTemplate(document);
+}
+export async function renderDocument(document) {
+  return renderTemplate(document?.layout === 'daily-card'
+    ? await dailyDocumentTemplate(document) : documentTemplate(document));
+}
 
 // Separate content records, but the existing global print ledger remains the only dispatch authority.
 export function documentStore(id, root = storeRoot) {
@@ -83,7 +92,7 @@ export function documentStore(id, root = storeRoot) {
         (record.error !== null && (typeof record.error?.code !== 'string' || typeof record.error?.message !== 'string'))) {
       throw new PreviewError('invalid_storage', 'Chat document identity or revision is invalid.');
     }
-    if (record.document !== null) documentTemplate(record.document);
+    if (record.document !== null) validateDocument(record.document);
     return record;
   }
   return {

@@ -3,7 +3,9 @@
 Describe text or a checklist in normal Copilot chat. The agent sends a bounded
 document to the canvas; the existing offline renderer wraps it at readable,
 fixed sizes. Ask in chat for revisions. There is no second chat, content form,
-external generation service, HTML renderer or daily-card field mapping.
+external generation service or HTML renderer. Generic text/checklists are not
+mapped into daily-card fields. An explicit original-daily-card document can reuse
+that existing layout without changing the generic defaults.
 
 V2 is an **additional, separately installed surface**. The V1 entrypoint, open
 panels, saved drafts and helper are not replaced. Source modules live alongside
@@ -84,6 +86,59 @@ Other read-only actions: `get_print_status` with `{"jobId":"<retained UUID>"}`
 and `list_prints` with `{}`. **There is no agent-facing print action or approval
 token.** Never use shell/HTTP access to simulate the user's Print click.
 
+### Original daily-card layout
+
+When the user asks for the original daily card, use the same `update_document`
+action with this alternate document shape, not an approximation made of generic
+heading blocks:
+
+```json
+{
+  "version": 1,
+  "layout": "daily-card",
+  "config": {
+    "location": "Friedrichshafen",
+    "latitude": 47.65,
+    "longitude": 9.48,
+    "timezone": "Europe/Berlin",
+    "work_start": "08:00",
+    "work_end": "17:00",
+    "lunch_start": "12:00",
+    "lunch_end": "13:00"
+  },
+  "date": "2026-11-17",
+  "now": "2026-11-17T06:00:00+01:00",
+  "calendar": {"state":"unavailable"},
+  "weather": {"state":"unavailable"},
+  "bottom": "joke",
+  "seed": 17,
+  "synthetic": true
+}
+```
+
+For available calendar data, supply
+`{"state":"available","events":[{"start":"<ISO instant>","end":"<ISO instant>"}]}`.
+Only timing fields are accepted, at most 500 intervals. For available weather,
+supply `{"state":"available","sunrise":"<ISO instant>","sunset":"<ISO instant>",
+"hours":[{"start":"<ISO instant>","cloud":10,"precipitation":0}]}` with at most
+26 numeric hourly observations. Timestamps require seconds and an explicit
+offset. Missing observations remain honestly unavailable, not zero or sunny.
+Never insert private calendar titles, provider URLs or fetched HTML.
+
+The adapter calls the original `daily_card.template.template` and validated
+offline model, then passes its unmodified output to the existing renderer.
+It preserves the original 24-dot title, 18-dot section headings, 16-dot body,
+13-dot annotations, separator rules, aligned header and measured compact rows.
+`bottom` is `joke`, `sudoku-easy` or `sudoku-medium`; Sudoku uses the existing
+seeded generator, not a text approximation. There is no new form or template menu.
+Rendering is bounded by the same height and PNG limits, with no cropping.
+
+This optional path needs Python 3.9+ with standard-library timezone support.
+The standalone V2 package includes only the original offline model, template,
+package initializer and bounded stdin adapter. It excludes the provider module
+and network-capable CLI. Python runs in isolated mode with a fixed import root;
+it never scans or prints. Generic text/checklists do not invoke Python.
+
 ## Preview and printing
 
 There is exactly one image region. Before inspection it is clearly labelled
@@ -145,3 +200,8 @@ load, trusted click, cross-provider document locking, V1/V2 shared dispatch
 identity and standalone packaging. Actual app discovery/open/action validation
 requires installation/reload approval; direct factory tests are not proof that
 the canvas is registered in the current Project.
+
+Daily-layout regressions compare PNG bytes against the original Python template
+for identical synthetic inputs, including joke and both Sudoku difficulties,
+and verify that invalid daily data invalidates old print approval. Updating the
+daily document does not modify other saved sample documents.
