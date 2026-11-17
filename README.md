@@ -26,20 +26,19 @@ no per-print helper click after explicit native opt-in.
 The [JSON-to-PNG renderer and daily-card example](docs/daily-card.md) also work
 from the CLI, with optional weather, times-only calendar input, walk suggestions,
 and joke, Sudoku, or line-art content. Rendering needs no helper or printer.
-An optional [read-only Copilot canvas](docs/canvas-preview.md) previews the
-bundled synthetic card or an explicitly selected local PNG without a helper
-or printer. The [Pocket Card Editor](docs/card-editor.md) adds editable synthetic
+The optional [Pocket Card Editor](docs/card-editor.md) provides editable synthetic
 drafts, section reordering, a native printer picker and explicit one-click printing.
+Editing and rendering need no helper or printer.
 Its [standalone user-local installation](docs/card-editor.md#available-in-every-copilot-chat)
-makes both canvases available outside repository sessions. Availability installation,
+makes the editor available outside repository sessions. Availability installation,
 native helper updates and physical printing are separate actions.
 Rendering through MCP, automatic calendar acquisition, and
 scheduled delivery remain [roadmap work](#what-this-showcases), not steps needed below.
 
 ## Try the demo
 
-For the smallest, paper-free increment, start with the
-[read-only canvas setup and demo](docs/canvas-preview.md). The steps below
+For a paper-free demo, start with the
+[Pocket Card Editor](docs/card-editor.md) without selecting a printer. The steps below
 are the separate physical-printing demo.
 
 You need **macOS 13+, a working Swift toolchain, Python 3, and Node 22+**, a
@@ -131,7 +130,7 @@ paper output; inspect the paper yourself.
 | Sessions | Isolated implementation work | Used to develop this demo |
 | MCP | Client-neutral PNG preview and approved printing | Available; [rendering through MCP planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/7) |
 | WorkIQ | Optional calendar context | [Timing-input adapter available](docs/daily-card.md#privacy-boundary); [automatic acquisition planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9) |
-| Canvas | Exact PNG preview; editable synthetic cards with native printer selection | [Read-only preview](docs/canvas-preview.md); [editor and user-local setup](docs/card-editor.md) |
+| Canvas | Editable synthetic cards with native printer selection | [Editor and user-local setup](docs/card-editor.md) |
 | Automation | Scheduled card delivery | [Planned](https://github.com/d-schmitt/copilot-pocket-printer/issues/9); needs an awake Mac and available printer |
 
 These are distinct capabilities, not a claim that all were new or generally

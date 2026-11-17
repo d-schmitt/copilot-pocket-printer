@@ -22,7 +22,10 @@ the current draft. A late render cannot replace a newer edit.
 After separately approving repository-extension activation, reload the
 `pocket-printer-preview` extension and open canvas `pocket-printer-editor`
 with empty input. Its SDK actions mirror the editor's draft operations.
-The existing read-only PNG preview remains a separate canvas.
+Only **Pocket Card Editor** is registered; the separate read-only
+**Pocket Printer Preview** canvas has been removed. The extension folder/provider
+keeps its existing `pocket-printer-preview` name so installations and shared
+private stores retain their identity.
 
 ### Available in every Copilot chat
 
@@ -47,8 +50,8 @@ Unrecognized destinations or local user modifications are not overwritten.
 
 Preserve unsaved drafts before reloading extensions in the destination chat.
 Choose **Pocket Card Editor** from the canvas menu. The provider is
-`user:pocket-printer-preview`; the canvas IDs remain `pocket-printer-editor`
-and `pocket-printer-preview`. In this repository, the same-name project extension
+`user:pocket-printer-preview`; the only canvas ID is `pocket-printer-editor`.
+In this repository, the same-name project extension
 shadows the user copy, so there is no duplicate provider in that session.
 Both scopes use the same private draft and print-intent stores, preserving
 cross-process duplicate protection rather than creating a second print history.
@@ -86,6 +89,13 @@ Tests use synthetic content and isolated temporary stores. They exercise
 field projection and ordering, actual rendering, both Sudoku difficulties,
 overflow/invalid fields, stale responses, permissions, storage bounds,
 conflicting saves and authenticated loopback endpoints.
+They also check the entrypoint's editor-only registration with an SDK stub and
+preserve PNG validation coverage. Packaging checks run with
+`python3 scripts/test_install_canvas.py` after building the renderer and verify
+the relocated editor without contacting the helper. These offline checks do not
+reload an installed provider or prove live app discovery. After a separately
+approved update/reload, confirm that only Pocket Card Editor is listed and that
+its capabilities and draft actions remain available.
 
 ## Printing from the canvas
 

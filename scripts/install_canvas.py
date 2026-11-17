@@ -16,7 +16,7 @@ NAME = "pocket-printer-preview"
 MANIFEST = ".pocket-canvas-install.json"
 FILES = ("extension.mjs", "editor.mjs", "editor.js", "editor.html", "editor.css",
          "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
-         "png.mjs", "preview.mjs", "view.js", "view.css", "view.html", "sample.png")
+         "png.mjs", "view.css")
 RELOCATIONS = {
     "draft.mjs": ("../../../.build/debug/card-renderer", "./runtime/card-renderer"),
     "printing.mjs": ("../../../bridge/ipc.mjs", "./runtime/ipc.mjs"),
@@ -57,29 +57,29 @@ def verify(target, node):
       import { pathToFileURL } from 'node:url';
       const base = pathToFileURL(process.argv[1] + '/');
       const { editorCanvas } = await import(new URL('editor.mjs', base));
-      const { previewCanvas } = await import(new URL('preview.mjs', base));
       const { Printing } = await import(new URL('printing.mjs', base));
       let helperCalls = 0;
       const editor = editorCanvas(undefined, { printing: () => new Printing({ helper: async () => {
         helperCalls++; throw new Error('Standalone verification must not contact the helper');
       } }) });
-      const preview = previewCanvas();
       const context = { instanceId: 'offline-install-check', input: {} };
       try {
         const panel = await editor.open(context);
         const state = await (await fetch(panel.url + 'state')).json();
         assert.equal(state.error, null);
         assert.equal(state.image.width, 384);
+        for (const asset of ['', 'editor.js', 'editor.css', 'view.css']) {
+          assert.equal((await fetch(panel.url + asset)).status, 200, 'Missing editor asset: ' + asset);
+        }
         const action = editor.actions.find(value => value.name === 'update_draft');
         const changed = await action.handler({ ...context, input: { revision: state.revision,
           draft: { ...state.draft, bottom: 'sudoku', order: [...state.draft.order].reverse() } } });
         assert.equal(changed.error, null);
         assert.equal(changed.renderedRevision, changed.revision);
-        const image = await preview.open(context);
-        assert.equal((await fetch(image.url + 'image.png')).status, 200);
-      } finally { await editor.onClose(context); await preview.onClose(context); }
+        assert.equal((await fetch(panel.url + 'image.png?revision=' + changed.revision)).status, 200);
+      } finally { await editor.onClose(context); }
       assert.equal(helperCalls, 0);
-      console.log('Standalone editor/render/preview verified; no helper, BLE, storage or paper access.');
+      console.log('Standalone editor/render verified; no helper, BLE, storage or paper access.');
     """
     with tempfile.TemporaryDirectory(prefix="canvas-check-", dir=target.parent.parent) as cwd:
         return command(node, "--input-type=module", "-e", script, str(target), cwd=cwd).strip()
@@ -155,7 +155,7 @@ def main():
     print(verify(target, node))
     print("User-local files installed; reload in the destination chat after preserving any unsaved drafts."
           if args.install else "Staged only; user-local extensions and running providers are unchanged.")
-    print("Canvas IDs: pocket-printer-editor, pocket-printer-preview")
+    print("Canvas ID: pocket-printer-editor")
     print("A project extension with the same name shadows this user copy in that repository.")
     print("Draft and print-intent stores remain shared and unchanged. No helper install, launch, scan or print.")
 

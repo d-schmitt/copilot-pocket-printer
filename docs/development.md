@@ -40,12 +40,12 @@ bash scripts/checks.sh
 ```
 
 This builds the package, runs Swift CLI/helper/card assertions, Python CLI/card
-integration and installer safety tests, Node stdio/Unix-IPC and canvas preview tests, then
+integration and installer safety tests, Node stdio/Unix-IPC and canvas editor tests, then
 `swift test`. The CLI and card XCTest wrappers use the same shared assertions
 as their standalone executables. No npm/Python packages or extra lint framework
 are needed. For focused commands, see the [CLI](cli.md) and
 [renderer checks](daily-card.md#offline-verification).
-The standalone [canvas checks](canvas-preview.md#offline-checks) need only Node;
+The [canvas checks](card-editor.md#focused-checks) use Node and the offline renderer;
 they do not activate an extension or start the native helper.
 
 On a Command Line Tools-only installation, XCTest may be unavailable. Use:

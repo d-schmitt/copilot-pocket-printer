@@ -1,4 +1,5 @@
 """Canvas installation tests never contact a helper or real printer."""
+import json
 import os
 import pathlib
 import shutil
@@ -40,10 +41,29 @@ class CanvasInstallationTests(unittest.TestCase):
             self.assertNotIn(str(installer.ROOT), path.read_text())
             self.assertNotIn("../../../", path.read_text())
         self.assertFalse(any(path.is_symlink() for path in self.target.rglob("*")))
+        for obsolete in ("preview.mjs", "view.html", "view.js", "sample.png"):
+            self.assertFalse((self.target / obsolete).exists())
+        self.assertTrue((self.target / "view.css").is_file(), "Editor still imports the shared stylesheet.")
         self.assertIn("'Copilot Pocket Printer Canvas'", (self.target / "private-store.mjs").read_text())
+        installer.command(self.node, "--test", "--test-name-pattern=entrypoint registers only",
+                          str(installer.ROOT / ".github/extensions/pocket-printer-preview/test/extension.test.mjs"),
+                          env={**os.environ, "POCKET_TEST_PACKAGED_EXTENSION": (self.target / "extension.mjs").as_uri()})
         installer.command(self.node, "--test", "--test-name-pattern=two separate provider processes",
                           str(installer.ROOT / ".github/extensions/pocket-printer-preview/test/printing.test.mjs"),
                           env={**os.environ, "POCKET_TEST_PACKAGED_PRINTING": (self.target / "printing.mjs").as_uri()})
+
+    def test_update_removes_managed_preview_assets_without_changing_provider_identity(self):
+        self.install()
+        for obsolete in ("preview.mjs", "view.html", "view.js", "sample.png"):
+            (self.target / obsolete).write_text("Previous managed preview asset")
+        saved = json.loads((self.target / installer.MANIFEST).read_text())
+        saved["entries"] = installer.inventory(self.target)
+        saved["entries"].pop(installer.MANIFEST)
+        (self.target / installer.MANIFEST).write_text(json.dumps(saved))
+        self.assertEqual(self.install(), "Updated")
+        self.assertEqual(installer.managed(self.target)["extension"], "pocket-printer-preview")
+        for obsolete in ("preview.mjs", "view.html", "view.js", "sample.png"):
+            self.assertFalse((self.target / obsolete).exists())
 
     def test_unrelated_or_user_modified_extension_is_preserved(self):
         self.target.mkdir(parents=True)
