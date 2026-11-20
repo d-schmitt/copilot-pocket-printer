@@ -66,6 +66,15 @@ struct HelperChecks {
         service.close(); server.stop()
     }
 
+    @MainActor static func waitForCompletion(_ service: HelperService) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while let active = service.active {
+            try check(clock.now < deadline, "timed out waiting for helper completion (state: \(active.state))")
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     @MainActor static func checks() async throws {
         let root = URL(fileURLWithPath: "/tmp/cppchecks-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -145,7 +154,7 @@ struct HelperChecks {
         var conflict = fields; conflict["device_id"] = UUID().uuidString
         try check(service.handle(try request("submit_png", conflict)).error?.code == "job_id_conflict", "ID binds device")
         service.approveActive()
-        try await Task.sleep(nanoseconds: 150_000_000)
+        try await waitForCompletion(service)
         try check(calls == 1 && service.latest?.state == "submitted_only" && service.latest?.paper_confirmed == false, "native approval submits once, never paper confirmed")
         try check(service.handle(try request("submit_png", fields)).result?.receipt?.state == "submitted_only" && calls == 1, "terminal duplicate cannot replay")
         let restarted = try HelperService(store: store, bluetooth: { "ready" }) { _, _ in throw CheckError.assertion("replay") }
@@ -338,9 +347,10 @@ struct HelperChecks {
         try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "in_progress", "same in-flight ID cannot schedule another execution")
         var other = fresh; other["job_id"] = UUID().uuidString
         try check(service.handle(try request("submit_png", other)).error?.code == "busy", "client mode preserves single active job")
-        await Task.yield()
-        try await Task.sleep(nanoseconds: 150_000_000)
-        try check(calls == 1 && service.latest?.state == "submitted_only", "client-approved submission executes once without any native or test-side approval")
+        try await waitForCompletion(service)
+        try check(calls == 1, "client-approved submission executes once without any native or test-side approval (calls: \(calls))")
+        try check(service.latest?.state == "submitted_only",
+                  "client-approved submission reports transfer (state: \(service.latest?.state ?? "missing"), error: \(service.latest?.error_code ?? "none"))")
         try check(service.handle(try request("submit_png", fresh)).result?.receipt?.state == "submitted_only" && calls == 1, "completed client-approved ID never replays")
         service.close()
 

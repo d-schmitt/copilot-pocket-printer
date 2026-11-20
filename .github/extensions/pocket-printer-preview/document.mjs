@@ -5,7 +5,8 @@ import { objectKeys, renderTemplate } from './draft.mjs';
 import { PreviewError } from './png.mjs';
 import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock, requireId } from './private-store.mjs';
 import { dailyDocumentSchema, validateDailyDocument, dailyDocumentTemplate } from './daily-document.mjs';
-import { focusSchema, surpriseSchema, templateOf, validateTemplateDocument, templateBlocks } from './templates.mjs';
+import { focusSchema, surpriseSchema, templateOf, validateTemplateDocument, templateBlocks, templateNames } from './templates.mjs';
+import { fixedTemplateNames, renderFixedTemplate } from './fixed-template.mjs';
 
 const textSchema = { type: 'string', minLength: 1, maxLength: 4096 };
 const genericDocumentSchema = {
@@ -71,10 +72,14 @@ export function documentTemplate(value) {
 }
 export function validateDocument(document) {
   if (document?.layout === 'daily-card') validateDailyDocument(document);
-  else if (['focus', 'surprise'].includes(document?.layout)) validateTemplateDocument(document);
+  else if (['focus', 'surprise', ...fixedTemplateNames].includes(document?.layout)) validateTemplateDocument(document);
   else documentTemplate(document);
 }
 export async function renderDocument(document, { surpriseSeed } = {}) {
+  if (fixedTemplateNames.includes(document?.layout)) {
+    validateTemplateDocument(document);
+    return renderFixedTemplate(document.layout);
+  }
   return renderTemplate(document?.layout === 'daily-card'
     ? await dailyDocumentTemplate(document) : ['focus', 'surprise'].includes(document?.layout)
       ? templateBlocks(document, surpriseSeed) : documentTemplate(document));
@@ -92,7 +97,7 @@ function validateRecord(record, id) {
   if (record.document !== null) validateDocument(record.document);
   const flow = recordFlow(record);
   objectKeys(flow, ['template', 'customized', 'surpriseSeed']);
-  if (![null, 'custom', 'daily', 'focus', 'surprise'].includes(flow.template) ||
+  if (![null, 'custom', ...templateNames].includes(flow.template) ||
       typeof flow.customized !== 'boolean' || (record.document && templateOf(record.document) !== flow.template) ||
       (flow.template === 'surprise' ? !Number.isInteger(flow.surpriseSeed) || flow.surpriseSeed < 0 || flow.surpriseSeed > 0xffffffff
         : flow.surpriseSeed !== null)) {

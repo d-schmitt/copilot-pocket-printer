@@ -5,6 +5,7 @@ import { callHelper } from '../../../bridge/ipc.mjs';
 import { PreviewError, inspectPng, MAX_PNG } from './png.mjs';
 import { storeRoot, privateDirectory, readRecord, writeRecord, withStoreLock, requireId } from './private-store.mjs';
 import { objectKeys } from './draft.mjs';
+import { fixedDigest } from './fixed-template.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const modes = ['native', 'ai_client'];
@@ -46,7 +47,12 @@ function terminal(receipt) {
   return ['submitted_only', 'cancelled_before_submission'].includes(receipt.state) ||
     (receipt.state === 'uncertain' && receipt.outcome_acknowledged === true);
 }
-function intentKey(inputDigest, target, mode) { return digest(`${inputDigest}:${target}:${mode}`); }
+function intentKey(inputDigest, target, mode, copyOf) {
+  const base = `${inputDigest}:${target}:${mode}`;
+  return digest(copyOf ? `${base}:copy-of:${copyOf}` : base);
+}
+const repeatDigest = fixedDigest('token-verbrauch');
+const repeatableReceipt = receipt => ['submitted_only', 'cancelled_before_submission'].includes(receipt.state);
 
 export class PrintLedger {
   constructor(root = storeRoot) { this.root = root; this.directory = join(root, 'print-intents'); }
@@ -70,12 +76,19 @@ export class PrintLedger {
   }
   async read(key) {
     const record = await readRecord(this.path(key, 'intent'), MAX_RECORD);
-    objectKeys(record, ['version', 'key', 'jobId', 'target', 'digest', 'bitmapDigest', 'original', 'preview', 'revision', 'mode']);
+    objectKeys(record, ['version', 'key', 'jobId', 'target', 'digest', 'bitmapDigest', 'original', 'preview', 'revision', 'mode',
+      ...(Object.hasOwn(record, 'copyOf') ? ['copyOf'] : [])]);
     requireId(record.jobId); requireId(record.target);
+    if (Object.hasOwn(record, 'copyOf')) {
+      requireId(record.copyOf);
+      if (record.digest !== repeatDigest || record.jobId === record.copyOf) {
+        throw new PreviewError('invalid_storage', 'Print copy does not match the fixed demo.');
+      }
+    }
     const original = pngBytes(record.original), preview = pngBytes(record.preview);
     if (record.version !== 1 || record.key !== key || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
         !modes.includes(record.mode) || digest(original) !== record.digest || digest(preview) !== record.bitmapDigest ||
-        intentKey(record.digest, record.target, record.mode) !== key ||
+        intentKey(record.digest, record.target, record.mode, record.copyOf) !== key ||
         inspectPng(original).height !== inspectPng(preview).height) {
       throw new PreviewError('invalid_storage', 'Print intent is corrupt. No automatic recovery or replay.');
     }
@@ -102,7 +115,7 @@ export class PrintLedger {
     }
     return record;
   }
-  async create({ original, preview, target, revision, mode }, beforeCreate = async () => {}) {
+  async create({ original, preview, target, revision, mode, copyOf, recoverLatest = false }, beforeCreate = async () => {}) {
     requireId(target);
     inspectPng(original); inspectPng(preview);
     if (!modes.includes(mode) || !Number.isSafeInteger(revision) || revision < 1) {
@@ -110,13 +123,37 @@ export class PrintLedger {
     }
     await this.prepare();
     return withStoreLock(this.directory, async () => {
-      const key = intentKey(digest(original), target, mode);
+      const originalDigest = digest(original);
+      const key = intentKey(originalDigest, target, mode, copyOf);
       const keys = await this.keys();
+      if (recoverLatest && !copyOf && originalDigest === repeatDigest && keys.includes(key)) {
+        // Only claimed copies supplant the original. A failed pre-claim attempt still needs a fresh repeat click.
+        let latest = await this.read(key);
+        if (await this.claimed(latest)) {
+          const seen = new Set([latest.jobId]);
+          for (;;) {
+            const next = intentKey(originalDigest, target, mode, latest.jobId);
+            if (!keys.includes(next)) return latest;
+            const candidate = await this.read(next);
+            if (!await this.claimed(candidate)) return latest;
+            if (seen.has(candidate.jobId)) throw new PreviewError('invalid_storage', 'Print copy history is corrupt.');
+            seen.add(candidate.jobId);
+            latest = candidate;
+          }
+        }
+      }
       await beforeCreate();
-      if (keys.includes(key)) return this.read(key);
+      if (keys.includes(key)) {
+        const retained = await this.read(key);
+        if (copyOf && await this.claimed(retained)) {
+          throw new PreviewError('copy_already_dispatched', 'A copy already exists for that job. Check its status before approving another.');
+        }
+        return retained;
+      }
       if (keys.length >= MAX_INTENTS) throw new PreviewError('storage_limit', 'The private 64-intent limit is reached. Inspect retained jobs; nothing is automatically deleted.');
       const record = { version: 1, key, jobId: randomUUID(), target, digest: digest(original),
-        bitmapDigest: digest(preview), original: original.toString('base64'), preview: preview.toString('base64'), revision, mode };
+        bitmapDigest: digest(preview), original: original.toString('base64'), preview: preview.toString('base64'), revision, mode,
+        ...(copyOf ? { copyOf } : {}) };
       if (Buffer.byteLength(JSON.stringify(record)) > MAX_RECORD) throw new PreviewError('storage_limit', 'Print intent exceeds its private record limit.');
       await writeRecord(this.path(key, 'intent'), record, { exclusive: true });
       return record;
@@ -194,7 +231,7 @@ export class Printing {
       throw new PreviewError('discovery_failed', messages[error.code] ?? 'Printer discovery failed. Check the helper and Bluetooth permissions, then scan again.');
     }
   }
-  async assertSettled() {
+  async assertSettled(strict = false) {
     for (const key of await this.ledger.keys()) {
       const previous = await this.ledger.read(key);
       if (!await this.ledger.claimed(previous)) continue;
@@ -202,10 +239,12 @@ export class Printing {
       let receipt;
       try { receipt = validReceipt((await this.helper('job_status', { job_id: previous.jobId })).receipt, previous); }
       catch { throw new PreviewError('unresolved_dispatch', 'A previous dispatch has no verifiable receipt. No new job or retry; inspect the original job.'); }
-      if (!terminal(receipt)) throw new PreviewError('unresolved_dispatch', 'A previous job is active or uncertain. Use the helper for native recovery.');
+      if (!(strict ? repeatableReceipt(receipt) : terminal(receipt))) {
+        throw new PreviewError('unresolved_dispatch', 'A previous job is active or uncertain. Use the helper for native recovery.');
+      }
     }
   }
-  async inspect({ original, target, revision, current }) {
+  async inspect({ original, target, revision, current, copyOf, recoverLatest }) {
     requireId(target);
     const metadata = inspectPng(original);
     const health = await this.health();
@@ -220,8 +259,17 @@ export class Printing {
     if (health.supports_expected_confirmation_mode !== true) {
       throw new PreviewError('helper_upgrade_required', 'This helper can inspect images but needs the confirmation-mode guard update before canvas printing. Update and independently reopen it after approval.');
     }
-    const intent = await this.ledger.create({ original, preview, target, revision, mode: health.confirmation_mode }, async () => {
-      await this.assertSettled(); current();
+    const intent = await this.ledger.create({ original, preview, target, revision, mode: health.confirmation_mode, copyOf, recoverLatest }, async () => {
+      if (copyOf) {
+        const prior = await this.ledger.find(copyOf);
+        if (prior.digest !== repeatDigest || prior.digest !== digest(original) || prior.bitmapDigest !== digest(preview) ||
+            prior.target !== target || prior.mode !== health.confirmation_mode ||
+            !await this.ledger.claimed(prior) || (!prior.copyOf && await this.ledger.rejected(prior)) || health.active_job_id ||
+            health.safety_blocked || health.discovery_active || health.confirmation_preference_error || health.bluetooth !== 'ready') {
+          throw new PreviewError('copy_not_ready', 'The previous copy, printer or confirmation mode is not ready for a new approval.');
+        }
+      }
+      await this.assertSettled(Boolean(copyOf)); current();
     });
     current();
     // Reinspection must agree with the retained bitmap; do not silently approve changed rasterization.
@@ -251,7 +299,7 @@ export class Printing {
       intent = await this.ledger.read(intent.key);
       if (await this.ledger.claimed(intent)) return this.status(intent.jobId);
       // Unknown claims block new IDs too, even if a lost request never reached the helper.
-      await this.assertSettled();
+      await this.assertSettled(Boolean(intent.copyOf));
       const health = await this.health();
       if (health.supports_expected_confirmation_mode !== true || health.confirmation_mode !== intent.mode ||
           health.confirmation_preference_error || health.safety_blocked || health.active_job_id ||

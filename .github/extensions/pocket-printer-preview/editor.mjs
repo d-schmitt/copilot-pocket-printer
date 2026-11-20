@@ -128,7 +128,7 @@ export class CardEditor {
     this.saved = { id: saved.id, revision: saved.revision };
     return this.refresh();
   }
-  async inspectForPrint(input) {
+  async inspectForPrint(input, { copyOf, recoverLatest } = {}) {
     this.mutable();
     objectKeys(input, ['revision', 'target']);
     this.invalidatePrint();
@@ -142,7 +142,7 @@ export class CardEditor {
         throw new PreviewError('stale_preview', 'Draft or target changed during inspection. Inspect again.');
       }
     };
-    const result = await this.printing.inspect({ original: this.image, target: input.target, revision, current });
+    const result = await this.printing.inspect({ original: this.image, target: input.target, revision, current, copyOf, recoverLatest });
     current();
     this.prepared = { ...result, revision, inspectionId: randomBytes(16).toString('hex'),
       approvalToken: randomBytes(32).toString('hex'),
