@@ -33,7 +33,7 @@ with `template: "vortragsnotiz"` to select it.
 
 **Token-Verbrauch** is a scripted demo, not a usage report or a true limit
 notification. It retrieves and calculates no usage, billing or quota data.
-The cover states this, and the paper uses only the approved fixed message.
+The cover is a staged cue; the paper uses only the approved fixed message.
 Select it with `request_template` and `template: "token-verbrauch"`; chat
 cannot edit either fixed template.
 

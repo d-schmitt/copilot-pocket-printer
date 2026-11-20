@@ -215,7 +215,7 @@ test('gallery preserves the approved tile order and removes only the named copy 
   for (const text of ['Start with a card', '01 / YOUR DAY', '02 / KEEP IT SIMPLE', '03 / DEUTSCHE BAHN',
     'Meetings, daylight, a walk and a little smile.', 'Three empty priorities. You fill them in through chat.',
     'Was kommt als Nächstes in meiner Demo?', 'Notizen gebündelt.', 'Continue current card', 'Reveal preview',
-    '04 / DEMO', 'Ich drucke dir deinen Token-Verbrauch.', 'Es werden keine echten Verbrauchsdaten abgerufen oder ausgewertet.']) {
+    '04 / DEMO', 'Ich drucke dir deinen Token-Verbrauch.', 'Ausgabe des monatlichen Token Verbrauchs.']) {
     assert.ok(html.includes(text), text);
   }
   for (const text of ['Original compact layout', 'Pick a starting point. Make it yours in chat.', 'One thing at a time',
