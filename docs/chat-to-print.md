@@ -1,6 +1,6 @@
 # Chat-to-print V2
 
-Start with **Daily card**, **Focus list** or **Surprise** in the gallery, then
+Start with **Daily card**, **Focus list** or **Vortragsnotiz** in the gallery. For Daily card and Focus list,
 describe changes in normal Copilot chat. The agent sends a bounded
 document to the canvas; the existing offline renderer wraps it at readable,
 fixed sizes. Ask in chat for revisions. There is no second chat, content form,
@@ -14,6 +14,8 @@ Daily card starts with a clearly labelled synthetic example, using the original
 meeting-time, sunrise/sunset, walk and joke composition. Chat can replace the
 offline inputs and choose the existing Easy/Medium Sudoku instead of a joke.
 Focus starts with exactly three empty numbered priority lines.
+Surprise is no longer in the picker. Existing Surprise documents and snapshots
+remain recoverable, and existing `request_template` callers can still select it.
 Surprise draws an original classic-caption meme with a small printer doodle, or
 a real seeded Sudoku with randomized Easy/Medium difficulty.
 
@@ -21,6 +23,21 @@ Surprise remains concealed until the user's **Reveal preview** click. Every
 chat revision makes a fresh draw and hides it again, including an unchanged
 message. Returning to the gallery or reopening also requires reveal again,
 but preserves the stored draw. Nothing is printed by revealing.
+
+Vortragsnotiz is a scripted stage cue, not a note-taking service.
+**Notizen gebündelt.** is fixed demo copy; no notes, calendar, customer data or
+other inputs are retrieved or processed, and no wait or external work is
+simulated. The selected magician illustration is a cover only. The fixed paper
+artwork cannot be changed through `update_document`; use `request_template`
+with `template: "vortragsnotiz"` to select it.
+
+The paper raster uses GitHub's official [Primer Octicons mark](https://github.com/primer/octicons/blob/e6626e159c4ba786d512e252182b62617014c752/icons/mark-github-24.svg)
+in black on white, aspect ratio preserved, above a separate plain-text caption.
+The [MIT notice](../.github/extensions/pocket-printer-preview/octicons-license.txt)
+ships with the staged bundle. The mark remains a GitHub trademark; the
+[GitHub usage guidelines](https://brand.github.com/foundations/logo#legal)
+apply separately. The demo caption is not a custom or official product logo.
+Verify applicable trademark permissions before public use or distribution.
 
 Changing templates only asks for confirmation when the current card contains
 chat-provided or chat-edited content. The choices are **Save as draft**,
@@ -210,9 +227,25 @@ existing 203-dpi convention, including 80 dots of feed:
 `(height + 80) / 203 * 25.4` mm. Physical length is approximate.
 
 Gallery, replacement-question and concealed-Surprise states serve neither the
-draft nor inspected image. They invalidate print approval. Both inspection and
-confirmation independently enforce the visible-preview gate. A late image load,
-render or poll cannot restore approval for hidden or revised content.
+draft nor inspected image, and invalidate print approval. For ordinary cards
+the canvas requires the exact inspected image to load before enabling Print.
+A late image load, render or poll cannot restore approval for hidden or revised
+content.
+
+Vortragsnotiz is the only exception: the trusted **Notiz ohne Vorschau drucken**
+click approves the inspected, digest-pinned 384-dot raster for the explicit
+target. The canvas only serves the cover; neither image endpoint serves the
+artwork, even after submission. The private helper inspection, job identity,
+durable claim and confirmation policy are unchanged. The native helper displays
+the active job bitmap in its own window after admission, including potentially
+while an AI-client-mode job runs. Do not share the helper window or the full
+desktop if the reveal must stay off-screen. Native mode still explicitly asks
+for approval there; AI-client mode requires an existing opt-in.
+
+The fixed raster follows the existing at-most-once ledger key (payload,
+selected printer and confirmation mode). Reopening the template or switching
+cards does not create a fresh job for the same key. Check the original job
+instead of attempting to replay it.
 
 The user's trusted **Print** click submits the inspected image to the selected
 printer once. Existing independent helper launch and native opt-in are unchanged.

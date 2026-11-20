@@ -1,5 +1,5 @@
 const $ = selector => document.querySelector(selector);
-let state, busy = false, epoch = 0, imageKey = null, decoded = null, attempted = null, lastJobId = null, poll;
+let state, busy = false, currentState = false, epoch = 0, imageKey = null, decoded = null, attempted = null, lastJobId = null, poll;
 function error(message) { $('#error').textContent = message; $('#error').hidden = !message; }
 async function request(route, input) {
   const response = await fetch(route, input === undefined ? { cache: 'no-store' } :
@@ -10,9 +10,12 @@ async function request(route, input) {
 }
 function scanning() { return ['scanning', 'stopping'].includes(state?.discovery?.state); }
 function visible() { return (!state?.flow || state.flow.view === 'preview') && !state?.flow?.hidden && !state?.flow?.pendingReplacement; }
+function coverOnly() { return state?.flow?.template === 'vortragsnotiz'; }
+function printableRevision() { return state?.renderedRevision === state?.revision && (coverOnly() || Boolean(state?.image)); }
 function canPrint() {
   const p = state?.prepared;
-  return visible() && !busy && p && !p.claimed && p.approvalToken && decoded === p.inspectionId &&
+  return currentState && visible() && !busy && p && !p.claimed && p.approvalToken &&
+    (coverOnly() || decoded === p.inspectionId) &&
     p.target === state.selectedPrinter?.id && p.revision === state.revision &&
     state.renderedRevision === state.revision && !state.error && !scanning() &&
     p.health.bluetooth === 'ready' && !p.health.safety_blocked && !p.health.active_job_id &&
@@ -24,10 +27,10 @@ function controls() {
   $('#stop').hidden = !state?.discovery?.scanId || !['scanning', 'stopping', 'error'].includes(state.discovery.state);
   $('#stop').disabled = busy;
   $('#target').disabled = busy || !state?.discovery?.devices.length;
-  $('#refresh').disabled = !visible() || busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision;
+  $('#refresh').disabled = !currentState || !visible() || busy || scanning() || !state?.selectedPrinter || !printableRevision();
   $('#status').hidden = !lastJobId;
   $('#status').disabled = busy;
-  for (const id of ['template-daily', 'template-focus', 'template-surprise', 'back', 'resume', 'save-replace', 'replace', 'cancel-replace']) {
+  for (const id of ['template-daily', 'template-focus', 'template-vortragsnotiz', 'back', 'resume', 'save-replace', 'replace', 'cancel-replace']) {
     $(`#${id}`).disabled = busy;
   }
   $('#reveal').disabled = busy || state?.renderedRevision !== state?.revision;
@@ -36,23 +39,40 @@ function draw(value) {
   if (state && value.revision < state.revision) return;
   const previousRequest = state?.flow?.pendingReplacement?.requestId;
   state = value;
+  currentState = true;
   const flow = value.flow ?? { view: 'preview', hidden: false };
   const pending = flow.pendingReplacement;
+  const cover = coverOnly();
   $('#gallery').hidden = flow.view !== 'gallery' || Boolean(pending);
   $('#resume').hidden = !value.document;
   $('#card-view').hidden = flow.view !== 'preview' || Boolean(pending);
   $('#replacement').hidden = !pending;
   $('#surprise-cover').hidden = !flow.hidden;
-  $('#preview-section').hidden = Boolean(flow.hidden);
+  $('#note-cover').hidden = !cover;
+  $('#preview-section').hidden = Boolean(flow.hidden) || cover;
   $('#printer-section').hidden = Boolean(flow.hidden);
+  $('#chat-hint').hidden = cover;
+  for (const [selector, english, german] of [
+    ['#back', 'Back to templates', 'Zurück zu den Vorlagen'],
+    ['#scan', 'Find printer', 'Drucker finden'],
+    ['#stop', 'Stop scan', 'Suche stoppen'],
+    ['label[for="target"]', 'Printer', 'Drucker'],
+    ['#print', 'Print', 'Notiz ohne Vorschau drucken'],
+    ['#refresh', 'Refresh preview', 'Druck vorbereiten'],
+    ['#status', 'Check print status', 'Druckstatus prüfen']
+  ]) {
+    const element = $(selector);
+    element.textContent = cover ? german : english;
+    element.lang = cover ? 'de' : 'en';
+  }
   $('#chat-hint').textContent = flow.template === 'focus' ? 'Tell Copilot your three priorities to fill these lines.' :
     flow.template === 'daily' ? 'Original daily layout. Supply your calendar and weather through chat; the starting card is a labelled synthetic example.' :
       flow.template === 'surprise' ? 'Chat edits reroll the Surprise and hide it again.' : 'Ask in chat to change this card.';
   $('#saved-notice').hidden = !flow.lastSavedDraft;
   $('#saved-notice').textContent = flow.lastSavedDraft ? 'Saved privately as a draft. Ask in chat to reopen saved drafts.' : '';
-  const valid = visible() && value.image && value.renderedRevision === value.revision;
-  const p = valid ? value.prepared : null;
-  const key = p ? `exact:${p.inspectionId}` : valid ? `draft:${value.revision}:${value.image.sha256}` : null;
+  const valid = visible() && !cover && value.image && value.renderedRevision === value.revision;
+  const p = visible() && printableRevision() ? value.prepared : null;
+  const key = !valid ? null : p ? `exact:${p.inspectionId}` : `draft:${value.revision}:${value.image.sha256}`;
   if (key !== imageKey || !valid) {
     imageKey = key; decoded = null;
     $('#preview').replaceChildren();
@@ -79,7 +99,8 @@ function draw(value) {
     ? `384 x ${value.image.height} dots | Estimated paper: ${(p?.estimatedPaperMm ?? value.image.estimatedPaperMm).toFixed(1)} mm, including 80-dot feed. Length is approximate.`
     : '';
   const placeholder = document.createElement('option');
-  placeholder.value = ''; placeholder.textContent = 'Select a discovered printer';
+  placeholder.value = ''; placeholder.textContent = cover ? 'Gefundenen Drucker auswählen' : 'Select a discovered printer';
+  placeholder.lang = cover ? 'de' : 'en';
   $('#target').replaceChildren(placeholder);
   for (const device of value.discovery.devices) {
     const option = document.createElement('option');
@@ -90,8 +111,14 @@ function draw(value) {
     $('#target').append(option);
   }
   $('#target').value = value.selectedPrinter?.id ?? '';
-  $('#scan-status').textContent = value.discovery.message;
-  $('#ready').textContent = p?.claimed ? 'Already claimed. Check its status; this image will not be sent again.' :
+  const idleCover = cover && value.discovery.state === 'idle';
+  $('#scan-status').textContent = idleCover ? 'Suche nach kompatiblen Bluetooth-Druckern.' : value.discovery.message;
+  $('#scan-status').lang = idleCover ? 'de' : 'en';
+  $('#ready').lang = cover ? 'de' : 'en';
+  $('#ready').textContent = cover ?
+    p?.claimed ? 'Auftrag bereits erfasst. Prüfe den Druckstatus. Er wird nicht erneut gesendet.' :
+      p?.mode === 'native' ? 'Im Drucker-Helfer ist eine weitere Bestätigung nötig. Dort kann die Druckgrafik sichtbar sein.' : '' :
+    p?.claimed ? 'Already claimed. Check its status; this image will not be sent again.' :
     p ? p.mode === 'ai_client' ? 'Print sends the displayed bitmap to the selected printer.' :
       'Native confirmation is on. Print also requires approval in the helper.' : '';
   if (p) lastJobId = p.jobId;
@@ -109,14 +136,14 @@ async function operate(route, input) {
   busy = true; epoch++; controls();
   try { draw(await request(route, input)); }
   catch (failure) {
-    decoded = null; imageKey = null;
+    currentState = false; decoded = null; imageKey = null;
     try { draw(await request('state')); }
     catch { error('The canvas connection is unavailable. Reopen this document; do not retry an uncertain print.'); return; }
     error(failure.message);
   } finally { busy = false; controls(); }
 }
 async function inspect() {
-  if (!visible() || busy || scanning() || !state?.selectedPrinter || !state.image || state.renderedRevision !== state.revision) return;
+  if (!currentState || !visible() || busy || scanning() || !state?.selectedPrinter || !printableRevision()) return;
   attempted = `${state.revision}:${state.selectedPrinter.id}`;
   decoded = null;
   // A refresh replaces even a failed image element, so a genuine new load is required.
@@ -127,7 +154,7 @@ async function autoInspect() {
   if (visible() && state?.selectedPrinter && !state.prepared && !state.error &&
       attempted !== `${state.revision}:${state.selectedPrinter.id}`) await inspect();
 }
-for (const template of ['daily', 'focus', 'surprise']) {
+for (const template of ['daily', 'focus', 'vortragsnotiz']) {
   $(`#template-${template}`).addEventListener('click', () =>
     operate('request_template', { revision: state.revision, template }));
 }
@@ -182,11 +209,11 @@ async function tick() {
     await autoInspect();
   } catch (failure) {
     if (epoch !== generation) return;
-    decoded = null; imageKey = null; controls(); error(failure.message);
+    currentState = false; decoded = null; imageKey = null; controls(); error(failure.message);
   }
 }
 function start() { if (poll === undefined) poll = setInterval(tick, 750); }
 await tick();
 start();
-window.addEventListener('pagehide', () => { clearInterval(poll); poll = undefined; epoch++; decoded = null; imageKey = null; controls(); });
+window.addEventListener('pagehide', () => { clearInterval(poll); poll = undefined; epoch++; currentState = false; decoded = null; imageKey = null; controls(); });
 window.addEventListener('pageshow', start);

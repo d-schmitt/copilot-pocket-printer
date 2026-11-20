@@ -13,6 +13,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dailyFixture } from './daily-fixture.mjs';
 import { templateDocument, templateBlocks } from '../templates.mjs';
+import { fixedDigest } from '../fixed-template.mjs';
 
 const target = '11111111-2222-4333-8444-555555555555';
 const document = { version: 1, blocks: [
@@ -21,14 +22,15 @@ const document = { version: 1, blocks: [
   { kind: 'checklist', items: [{ text: 'Water bottle', checked: false }, { text: 'Comfortable shoes', checked: true }] }
 ] };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-async function fixture(t) {
+async function fixture(t, { lostSubmit = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pocket-chat-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls = [], receipts = new Map(), ledger = new PrintLedger(root);
+  const secondTarget = '22222222-2222-4333-8444-555555555555';
   const helper = async (method, fields) => {
     calls.push(method);
     if (method === 'helper_status') return { health: { bluetooth: 'ready', safety_blocked: false,
-      confirmation_mode: 'ai_client', supports_expected_confirmation_mode: true } };
+      confirmation_mode: 'ai_client', supports_expected_confirmation_mode: true, supports_printer_discovery: true } };
     if (method === 'inspect_png') {
       const bytes = Buffer.from(fields.png_base64, 'base64');
       return { image: { sha256: hash(bytes), width: 384, height: inspectPng(bytes).height,
@@ -39,15 +41,18 @@ async function fixture(t) {
       const receipt = { job_id: fields.job_id, device_id: fields.device_id, image_sha256: hash(bytes),
         height: inspectPng(bytes).height, confirmation_mode: 'ai_client', state: 'submitted_only', paper_confirmed: false };
       receipts.set(fields.job_id, receipt);
+      if (lostSubmit) throw new Error('Synthetic missing submit response');
       return { receipt };
     }
+    if (method === 'start_discovery') return { discovery: { scan_id: fields.scan_id, state: 'stopped',
+      devices: [target, secondTarget].map(id => ({ id, name: 'Mini Pocket Printer_BLE' })), message: 'Synthetic scan' } };
     if (method === 'job_status') return { receipt: receipts.get(fields.job_id) };
     throw new Error(`Unexpected helper call: ${method}`);
   };
   const options = { documents: documentStore('weekend-walk', root), printing: new Printing({ helper, ledger }) };
   const editor = new ChatDocument('weekend-walk', options);
   await editor.adopt(await options.documents.initialize());
-  return { root, calls, helper, ledger, options, editor };
+  return { root, calls, helper, ledger, options, editor, secondTarget };
 }
 async function prepare(editor) {
   editor.resumePreview({});
@@ -453,5 +458,98 @@ test('Surprise rerolls and conceals every chat revision; back, reload and hidden
   restarted.resumePreview({});
   await restarted.reveal({ revision: 3 });
   await assert.rejects(restarted.confirmPrint(approval), /approval/);
+  assert.equal(f.calls.includes('submit_png'), false);
+});
+
+test('fixed print raster stays private across inspection, lost submit, same-job recovery and reopen', async t => {
+  const f = await fixture(t, { lostSubmit: true });
+  const canvas = chatCanvas(undefined, { ...f.options, render() { throw new Error('No external rendering'); } });
+  const ctx = { instanceId: 'fixed-test', input: { documentId: 'weekend-walk' } };
+  const { url } = await canvas.open(ctx);
+  t.after(() => canvas.onClose(ctx));
+  const invoke = (name, input = {}) => canvas.actions.find(a => a.name === name).handler({ ...ctx, input });
+  const post = (route, input = {}) => fetch(url + route, { method: 'POST',
+    headers: { Origin: new URL(url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  const raster = await renderDocument(templateDocument('vortragsnotiz'));
+  assert.equal(hash(raster), fixedDigest);
+  assert.equal(inspectPng(raster).width, 384);
+  assert.equal(raster[24], 1, 'Packaged raster must be one bit per sample');
+  const cover = Buffer.from(await (await fetch(url + 'template-cover.png')).arrayBuffer());
+  assert.deepEqual(cover, await readFile(new URL('../template-cover.png', import.meta.url)));
+  assert.notEqual(hash(cover), fixedDigest);
+  assert.ok(!canvas.actions.some(a => ['confirm_print', 'inspect_for_print'].includes(a.name)));
+  await assert.rejects(invoke('update_document', { revision: 1, document: templateDocument('vortragsnotiz') }),
+    { code: 'fixed_template' });
+  const fixed = await invoke('request_template', { revision: 1, template: 'vortragsnotiz' });
+  const revision = fixed.revision;
+  assert.equal(fixed.image, null);
+  await assert.rejects(invoke('update_document', { revision, document }), { code: 'fixed_template' });
+  assert.equal((await post('inspect_for_print', { revision, target })).status, 400, 'Explicit target required');
+  assert.equal((await post('start_scan')).status, 200);
+  const select = id => post('select_printer', { id });
+  const inspect = async () => {
+    const response = await post('inspect_for_print', { revision, target });
+    const value = await response.text();
+    assert.equal(response.status, 200, value);
+    assert.ok(!value.includes(raster.toString('base64')));
+    const { image, prepared: p } = JSON.parse(value);
+    assert.equal(image, null);
+    assert.equal(p.digest, fixedDigest);
+    assert.equal(p.estimatedPaperMm, undefined);
+    return { revision, target, jobId: p.jobId, digest: p.digest, bitmapDigest: p.bitmapDigest,
+      inspectionId: p.inspectionId, approvalToken: p.approvalToken, paperApproved: true };
+  };
+  const concealed = async approval => {
+    for (const route of ['template-raster.png', `image.png?revision=${revision}`, `print-preview.png?inspection=${approval.inspectionId}`]) {
+      assert.equal((await fetch(url + route)).status, 404, route);
+    }
+    const state = await (await fetch(url + 'state')).text();
+    assert.ok(!state.includes(raster.toString('base64')));
+    assert.equal(JSON.parse(state).image, null);
+    assert.equal((await invoke('get_document')).prepared, null);
+  };
+  await select(target);
+  const old = await inspect();
+  await select(f.secondTarget);
+  assert.equal((await post('confirm_print', old)).status, 400);
+  await select(target);
+  const approval = await inspect();
+  assert.equal(approval.jobId, old.jobId);
+  await concealed(approval);
+  assert.equal((await post('confirm_print', { ...approval, digest: '0'.repeat(64) })).status, 400);
+  assert.equal((await post('confirm_print', { ...approval, paperApproved: false })).status, 400);
+  const responses = await Promise.all([post('confirm_print', approval), post('confirm_print', approval)]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 400]);
+  const winner = await responses.find(response => response.ok).json();
+  assert.equal(winner.job.state, 'uncertain');
+  assert.equal(winner.job.jobId, approval.jobId);
+  await concealed(approval);
+  assert.equal((await invoke('get_print_status', { jobId: approval.jobId })).job.state, 'submitted_only');
+  assert.equal((await post('confirm_print', approval)).status, 400);
+  const reopened = new ChatDocument('weekend-walk', f.options);
+  await reopened.sync();
+  const recovered = await prepare(reopened);
+  assert.equal(recovered.jobId, approval.jobId);
+  assert.equal(reopened.state(true).prepared.claimed, true);
+  assert.equal(reopened.state(true).prepared.approvalToken, undefined);
+  assert.equal(f.calls.filter(call => call === 'submit_png').length, 1);
+});
+
+test('replacing a fixed revision revokes approval and preserves recoverable Surprise snapshots', async t => {
+  const f = await fixture(t), e = f.editor;
+  let state = await e.requestReplacement({ revision: 1, template: 'surprise' });
+  const surprise = { version: 1, layout: 'surprise', message: 'Retained synthetic note' };
+  state = await e.updateDocument({ revision: state.revision, document: surprise });
+  state = await e.requestReplacement({ revision: state.revision, template: 'vortragsnotiz' });
+  state = await e.resolveReplacement({ requestId: state.flow.pendingReplacement.requestId, decision: 'save' });
+  const approval = await prepare(e);
+  const other = new ChatDocument('weekend-walk', f.options);
+  await other.sync();
+  await other.requestReplacement({ revision: state.revision, savedId: state.flow.lastSavedDraft }, 'saved');
+  await assert.rejects(e.confirmPrint(approval), { code: 'preview_hidden' });
+  assert.deepEqual(e.draft, surprise);
+  assert.equal(e.state().flow.hidden, true);
+  await e.reveal({ revision: e.revision });
+  await assert.rejects(e.confirmPrint(approval), { code: 'approval_required' });
   assert.equal(f.calls.includes('submit_png'), false);
 });

@@ -3,7 +3,8 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { objectKeys } from './draft.mjs';
 import { PreviewError } from './png.mjs';
 import { documentSchema, documentIdSchema, requireDocumentId, validateDocument, renderDocument, documentStore, recordFlow } from './document.mjs';
-import { templateNames, templateOf, templateDocument } from './templates.mjs';
+import { templateNames, templateOf, templateDocument, revealTemplate } from './templates.mjs';
+import { fixedDigest } from './fixed-template.mjs';
 import { servePanel, readJson } from './loopback.mjs';
 
 export class ChatDocument extends CardEditor {
@@ -19,18 +20,33 @@ export class ChatDocument extends CardEditor {
     this.pendingReplacement = null;
     this.lastSavedDraft = null;
     this.drawSeed = options.drawSeed ?? (() => randomInt(0x100000000));
-    if (!options.render) this.render = document => renderDocument(document, { surpriseSeed: this.flow.surpriseSeed });
+    this.render = document => document.layout !== revealTemplate && options.render
+      ? options.render(document) : renderDocument(document, { surpriseSeed: this.flow.surpriseSeed });
   }
-  visible() {
+  fixedTemplate() { return this.draft?.layout === revealTemplate; }
+  openForPrint() {
     return this.view === 'preview' && !this.pendingReplacement &&
       (this.flow.template !== 'surprise' || this.revealedRevision === this.revision);
   }
-  requireVisible() {
-    if (!this.visible()) throw new PreviewError('preview_hidden', 'Open this card and reveal its current preview before preparing or approving a print.');
+  previewVisible() { return this.openForPrint() && !this.fixedTemplate(); }
+  requirePrintView() {
+    if (!this.openForPrint()) throw new PreviewError('preview_hidden', 'Open this card and reveal its current preview before preparing or approving a print.');
+    if (this.fixedTemplate() && this.imageMetadata?.sha256 !== fixedDigest) {
+      throw new PreviewError('preview_not_ready', 'The current fixed template did not render. Nothing was approved.');
+    }
   }
   state(browser = false) {
     const { draft, saved, ...state } = super.state(browser);
-    return { ...state, ...(this.visible() ? {} : { image: null, prepared: null }),
+    const fixed = this.fixedTemplate();
+    let prepared = this.openForPrint() ? state.prepared : null;
+    if (fixed) {
+      if (browser && prepared?.digest === fixedDigest) {
+        const { estimatedPaperMm, ...approval } = prepared;
+        prepared = approval;
+      } else prepared = null;
+    }
+    return { ...state, image: this.previewVisible() ? state.image : null,
+      prepared,
       documentId: this.documentId, document: draft,
       flow: { template: this.flow.template, customized: this.flow.customized, view: this.view,
         hidden: this.flow.template === 'surprise' && this.revealedRevision !== this.revision,
@@ -70,6 +86,9 @@ export class ChatDocument extends CardEditor {
       const previous = await this.documents.load();
       if (input.revision !== previous.revision) throw new PreviewError('stale_document', 'This document changed in another panel. Read get_document before revising it.');
       const previousFlow = recordFlow(previous);
+      if (previousFlow.template === revealTemplate || templateOf(input.document) === revealTemplate) {
+        throw new PreviewError('fixed_template', 'Vortragsnotiz cannot be edited in chat. Choose a template to change cards.');
+      }
       if (previousFlow.customized && previousFlow.template && previousFlow.template !== templateOf(input.document)) {
         throw new PreviewError('replacement_required', 'This card has chat edits. Request a template change and let the user choose Save as draft, Replace without saving or Cancel.');
       }
@@ -95,7 +114,7 @@ export class ChatDocument extends CardEditor {
     this.mutable();
     objectKeys(input, kind === 'template' ? ['revision', 'template'] : ['revision', 'savedId']);
     if (kind === 'template' && !templateNames.includes(input.template)) {
-      throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Surprise.');
+      throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Vortragsnotiz.');
     }
     let record;
     await this.documents.locked(async () => {
@@ -175,7 +194,7 @@ export class ChatDocument extends CardEditor {
   async inspectSelected(input) {
     return this.documents.locked(async () => {
       await this.sync();
-      this.requireVisible();
+      this.requirePrintView();
       if (!this.selectedPrinter || input.target !== this.selectedPrinter.id) {
         throw new PreviewError('printer_required', 'Select a discovered printer in this panel first.');
       }
@@ -189,7 +208,10 @@ export class ChatDocument extends CardEditor {
     // Keep the content revision locked through the shared durable claim boundary across all providers.
     return this.documents.locked(async () => {
       await this.sync();
-      this.requireVisible();
+      this.requirePrintView();
+      if (this.fixedTemplate() && this.prepared?.intent.digest !== fixedDigest) {
+        throw new PreviewError('approval_required', 'Explicit approval of the fixed template and target is required.');
+      }
       if (input.target !== this.selectedPrinter?.id) throw new PreviewError('stale_approval', 'The selected printer changed.');
       return super.confirmPrint(input);
     });
@@ -222,7 +244,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
     ['get_document', 'Read the document, revision and preview state before making a revision. Never prints.', {}],
     ['update_document', 'Revise the active card using daily-card offline inputs, focus with exactly three priorities, surprise with an optional message, or generic text/checklist blocks. Chat edits customize content; Surprise rerolls and hides until user reveal. Request template changes separately. Never prints.',
       { revision: { type: 'integer', minimum: 1 }, document: documentSchema }],
-    ['request_template', 'Choose Daily card, Focus list or Surprise. Customized cards require a user decision in the canvas before replacement.',
+    ['request_template', 'Choose Daily card, Focus list or fixed Vortragsnotiz. Legacy Surprise remains supported. Customized cards require a user decision in the canvas before replacement.',
       { revision: { type: 'integer', minimum: 1 }, template: { enum: templateNames } }],
     ['list_saved_documents', 'List private saved card snapshots for this document. Never prints.', {}],
     ['open_saved_document', 'Open a saved card snapshot; prompts in the canvas before replacing chat-customized content.',
@@ -232,7 +254,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   ];
   return {
     id: 'pocket-printer-chat', displayName: 'Pocket Printer V2',
-    description: 'Choose Daily card, Focus list or Surprise, customize in chat, and let the user reveal and review the exact preview before Print.',
+    description: 'Choose Daily card, Focus list or Vortragsnotiz. The user reviews the exact preview before Print, except for the fixed Vortragsnotiz paper reveal.',
     inputSchema: { type: ['object', 'null'], properties: { documentId: documentIdSchema },
       required: [], additionalProperties: false },
     actions: actions.map(([name, description, properties]) => ({
@@ -258,14 +280,15 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
           const server = await servePanel({
             assets: { '': ['chat.html', 'text/html; charset=utf-8'],
               'chat.js': ['chat.js', 'text/javascript; charset=utf-8'],
-              'chat.css': ['chat.css', 'text/css; charset=utf-8'] },
+              'chat.css': ['chat.css', 'text/css; charset=utf-8'],
+              'template-cover.png': ['template-cover.png', 'image/png'] },
             get: async (route, query) => {
               await editor.sync();
               if (route === 'state') return { type: 'application/json', body: JSON.stringify(editor.state(true)) };
-              if (route === 'image.png' && editor.visible() && editor.image && String(editor.renderedRevision) === query.get('revision')) {
+              if (route === 'image.png' && editor.previewVisible() && editor.image && String(editor.renderedRevision) === query.get('revision')) {
                 return { type: 'image/png', body: editor.image };
               }
-              if (route === 'print-preview.png' && editor.visible() && editor.prepared?.inspectionId === query.get('inspection')) {
+              if (route === 'print-preview.png' && editor.previewVisible() && editor.prepared?.inspectionId === query.get('inspection')) {
                 return { type: 'image/png', body: Buffer.from(editor.prepared.intent.preview, 'base64') };
               }
             },

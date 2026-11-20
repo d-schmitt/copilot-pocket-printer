@@ -6,10 +6,13 @@ export const focusSchema = shape({ version: { const: 1 }, layout: { const: 'focu
   priorities: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 512 } } });
 export const surpriseSchema = shape({ version: { const: 1 }, layout: { const: 'surprise' },
   message: { type: 'string', maxLength: 512 } });
-export const templateNames = ['daily', 'focus', 'surprise'];
+export const revealTemplate = 'vortragsnotiz';
+// Surprise remains available to existing SDK callers and saved documents, not in the picker.
+export const templateNames = ['daily', 'focus', revealTemplate, 'surprise'];
 export function templateOf(document) {
   if (!document) return null;
-  return document.layout === 'daily-card' ? 'daily' : ['focus', 'surprise'].includes(document.layout) ? document.layout : 'custom';
+  return document.layout === 'daily-card' ? 'daily' :
+    ['focus', 'surprise', revealTemplate].includes(document.layout) ? document.layout : 'custom';
 }
 function line(value) {
   if (typeof value !== 'string' || Buffer.byteLength(value) > 512 || /[\x00-\x1f\x7f]/.test(value)) {
@@ -23,6 +26,8 @@ export function validateTemplateDocument(document) {
       throw new PreviewError('invalid_document', 'Focus list has exactly three priorities.');
     }
     document.priorities.forEach(line);
+  } else if (document.layout === revealTemplate) {
+    objectKeys(document, ['version', 'layout']);
   } else {
     objectKeys(document, ['version', 'layout', 'message']);
     if (document.layout !== 'surprise') throw new PreviewError('invalid_document', 'Unknown template.');
@@ -58,6 +63,7 @@ export function templateBlocks(document, seed) {
 export function templateDocument(name) {
   if (name === 'focus') return { version: 1, layout: 'focus', priorities: ['', '', ''] };
   if (name === 'surprise') return { version: 1, layout: 'surprise', message: '' };
+  if (name === revealTemplate) return { version: 1, layout: revealTemplate };
   if (name !== 'daily') throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Surprise.');
   const stamp = time => `2026-11-17T${time}:00+01:00`;
   return {

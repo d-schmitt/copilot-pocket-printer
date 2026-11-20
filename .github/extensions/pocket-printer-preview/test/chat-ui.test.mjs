@@ -136,7 +136,7 @@ test('gallery and concealed Surprise expose no bitmap; each edit needs a trusted
   const value = { ...initial(), image: null, document: { version: 1, layout: 'surprise', message: '' },
     flow: { view: 'gallery', template: 'surprise', hidden: true, customized: false } };
   const ui = await browser(value, async (route, body, state) => {
-    if (route === 'request_template') return { ...state, flow: { ...state.flow, view: 'preview' } };
+    if (route === 'resume_preview') return { ...state, flow: { ...state.flow, view: 'preview' } };
     if (route === 'reveal_preview') return { ...state, image: initial().image, prepared: prepared(`draw-${state.revision}`, state.revision),
       selectedPrinter: device, flow: { ...state.flow, hidden: false } };
     throw new Error(`Unexpected operation: ${route}`);
@@ -145,7 +145,7 @@ test('gallery and concealed Surprise expose no bitmap; each edit needs a trusted
   assert.equal($('#gallery').hidden, false);
   assert.equal($('#card-view').hidden, true);
   assert.equal($('#preview').children.length, 0);
-  await $('#template-surprise').events.get('click')();
+  await $('#resume').events.get('click')();
   assert.equal($('#gallery').hidden, true);
   assert.equal($('#surprise-cover').hidden, false);
   assert.equal($('#print').disabled, true);
@@ -167,6 +167,56 @@ test('gallery and concealed Surprise expose no bitmap; each edit needs a trusted
   assert.equal($('#print').disabled, true);
   $('#preview').children[0].events.get('load')();
   assert.equal($('#print').disabled, false);
+});
+
+test('Vortragsnotiz offers trusted approval without inserting a bitmap, even after submission', async () => {
+  const cover = { ...initial(), image: null, document: { version: 1, layout: 'vortragsnotiz' },
+    flow: { view: 'gallery', template: null, hidden: false }, renderedRevision: null };
+  const ui = await browser(cover, async (route, body, state) => {
+    if (route === 'request_template') return { ...state, revision: 3, renderedRevision: 3,
+      flow: { view: 'preview', template: body.template, hidden: false } };
+    if (route === 'confirm_print') return { ...state, prepared: { ...state.prepared, claimed: true },
+      job: { jobId: body.jobId, state: 'submitted_only' } };
+    throw new Error(`Unexpected operation: ${route}`);
+  });
+  const $ = ui.$;
+  await $('#template-vortragsnotiz').events.get('click')();
+  assert.equal($('#note-cover').hidden, false);
+  assert.equal($('#preview-section').hidden, true);
+  assert.equal($('#print').textContent, 'Notiz ohne Vorschau drucken');
+  assert.equal($('#scan-status').textContent, 'Suche nach kompatiblen Bluetooth-Druckern.');
+  assert.equal($('#print').disabled, true);
+  const ready = { ...cover, revision: 3, renderedRevision: 3, selectedPrinter: device, prepared: prepared('one', 3),
+    flow: { view: 'preview', template: 'vortragsnotiz', hidden: false } };
+  ui.set(ready);
+  await ui.tick();
+  assert.equal($('#preview').children.length, 0);
+  assert.equal($('#print').disabled, false);
+  ui.get(async () => { throw new Error('lost state'); });
+  await ui.tick();
+  assert.equal($('#print').disabled, true);
+  ui.get(null);
+  await ui.tick();
+  await $('#print').events.get('click')({ isTrusted: false });
+  assert.equal(ui.calls.length, 1);
+  await $('#print').events.get('click')({ isTrusted: true });
+  assert.equal(ui.calls.filter(call => call.route === 'confirm_print').length, 1);
+  assert.equal($('#preview').children.length, 0);
+  assert.equal($('#note-cover').hidden, false);
+  assert.equal($('#status').hidden, false);
+  assert.equal($('#print').disabled, true);
+});
+
+test('gallery preserves the approved tile order and removes only the named copy and replaced tile', async () => {
+  const html = await readFile(new URL('../chat.html', import.meta.url), 'utf8');
+  assert.deepEqual([...html.matchAll(/id="template-([^"]+)"/g)].map(([, id]) => id), ['daily', 'focus', 'vortragsnotiz']);
+  for (const text of ['Start with a card', '01 / YOUR DAY', '02 / KEEP IT SIMPLE', '03 / DEUTSCHE BAHN',
+    'Meetings, daylight, a walk and a little smile.', 'Three empty priorities. You fill them in through chat.',
+    'Was kommt als Nächstes in meiner Demo?', 'Notizen gebündelt.', 'Continue current card', 'Reveal preview']) {
+    assert.ok(html.includes(text), text);
+  }
+  for (const text of ['Original compact layout', 'Pick a starting point. Make it yours in chat.', 'One thing at a time',
+    'CHAT TO PRINT', 'Die nächste Notiz kommt auf Papier']) assert.ok(!html.includes(text), text);
 });
 
 test('replacement choices hide the old image and only trusted decisions reach the guarded route', async () => {

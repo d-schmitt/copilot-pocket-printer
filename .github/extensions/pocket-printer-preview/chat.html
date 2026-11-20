@@ -9,27 +9,23 @@
 </head>
 <body>
   <main>
-    <header><h1>Pocket Printer</h1><span>CHAT TO PRINT</span></header>
+    <header><h1>Pocket Printer</h1></header>
     <div id="error" role="alert" hidden></div>
     <section id="gallery" aria-label="Templates">
       <h2>Start with a card</h2>
-      <p class="muted">Pick a starting point. Make it yours in chat.</p>
       <button id="resume" hidden>Continue current card</button>
       <div class="templates">
         <button id="template-daily" class="template">
           <span class="template-kicker">01 / YOUR DAY</span><strong>Daily card</strong>
           <span>Meetings, daylight, a walk and a little smile.</span>
-          <span class="template-foot">Original compact layout</span>
         </button>
         <button id="template-focus" class="template">
           <span class="template-kicker">02 / KEEP IT SIMPLE</span><strong>Focus list</strong>
           <span>Three empty priorities. You fill them in through chat.</span>
-          <span class="template-foot">One thing at a time</span>
         </button>
-        <button id="template-surprise" class="template">
-          <span class="template-kicker">03 / A LITTLE MYSTERY</span><strong>Surprise</strong>
-          <span>A printer meme or an Easy/Medium Sudoku. Reveal when ready.</span>
-          <span class="template-foot">No peeking before the preview</span>
+        <button id="template-vortragsnotiz" class="template" lang="de">
+          <span class="template-kicker">03 / DEUTSCHE BAHN</span><strong>Vortragsnotiz</strong>
+          <span>Was kommt als Nächstes in meiner Demo?</span>
         </button>
       </div>
     </section>
@@ -46,6 +42,11 @@
       <button id="back" class="back">Back to templates</button>
       <p id="chat-hint" class="muted">Ask in chat to change this card.</p>
       <p id="saved-notice" class="muted" role="status" hidden></p>
+      <section id="note-cover" lang="de" aria-labelledby="note-title" hidden>
+        <h2 id="note-title">Vortragsnotiz</h2>
+        <p>Notizen gebündelt.</p>
+        <img src="template-cover.png" loading="lazy" alt="" width="592" height="887">
+      </section>
       <section id="surprise-cover" hidden>
         <span class="mystery" aria-hidden="true">?</span>
         <h2>Your Surprise is ready</h2>
