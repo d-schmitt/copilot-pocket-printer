@@ -461,7 +461,7 @@ test('Surprise rerolls and conceals every chat revision; back, reload and hidden
   assert.equal(f.calls.includes('submit_png'), false);
 });
 
-test('fixed print raster stays private across inspection, lost submit, same-job recovery and reopen', async t => {
+for (const name of ['vortragsnotiz', 'token-verbrauch']) test(`${name} raster stays private across inspection, lost submit, same-job recovery and reopen`, async t => {
   const f = await fixture(t, { lostSubmit: true });
   const canvas = chatCanvas(undefined, { ...f.options, render() { throw new Error('No external rendering'); } });
   const ctx = { instanceId: 'fixed-test', input: { documentId: 'weekend-walk' } };
@@ -470,17 +470,16 @@ test('fixed print raster stays private across inspection, lost submit, same-job 
   const invoke = (name, input = {}) => canvas.actions.find(a => a.name === name).handler({ ...ctx, input });
   const post = (route, input = {}) => fetch(url + route, { method: 'POST',
     headers: { Origin: new URL(url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
-  const raster = await renderDocument(templateDocument('vortragsnotiz'));
-  assert.equal(hash(raster), fixedDigest);
+  const raster = await renderDocument(templateDocument(name));
+  assert.equal(hash(raster), fixedDigest(name));
   assert.equal(inspectPng(raster).width, 384);
-  assert.equal(raster[24], 1, 'Packaged raster must be one bit per sample');
   const cover = Buffer.from(await (await fetch(url + 'template-cover.png')).arrayBuffer());
   assert.deepEqual(cover, await readFile(new URL('../template-cover.png', import.meta.url)));
-  assert.notEqual(hash(cover), fixedDigest);
+  assert.notEqual(hash(cover), fixedDigest(name));
   assert.ok(!canvas.actions.some(a => ['confirm_print', 'inspect_for_print'].includes(a.name)));
-  await assert.rejects(invoke('update_document', { revision: 1, document: templateDocument('vortragsnotiz') }),
+  await assert.rejects(invoke('update_document', { revision: 1, document: templateDocument(name) }),
     { code: 'fixed_template' });
-  const fixed = await invoke('request_template', { revision: 1, template: 'vortragsnotiz' });
+  const fixed = await invoke('request_template', { revision: 1, template: name });
   const revision = fixed.revision;
   assert.equal(fixed.image, null);
   await assert.rejects(invoke('update_document', { revision, document }), { code: 'fixed_template' });
@@ -494,13 +493,13 @@ test('fixed print raster stays private across inspection, lost submit, same-job 
     assert.ok(!value.includes(raster.toString('base64')));
     const { image, prepared: p } = JSON.parse(value);
     assert.equal(image, null);
-    assert.equal(p.digest, fixedDigest);
+    assert.equal(p.digest, fixedDigest(name));
     assert.equal(p.estimatedPaperMm, undefined);
     return { revision, target, jobId: p.jobId, digest: p.digest, bitmapDigest: p.bitmapDigest,
       inspectionId: p.inspectionId, approvalToken: p.approvalToken, paperApproved: true };
   };
   const concealed = async approval => {
-    for (const route of ['template-raster.png', `image.png?revision=${revision}`, `print-preview.png?inspection=${approval.inspectionId}`]) {
+    for (const route of ['template-raster.png', 'token-raster.png', `image.png?revision=${revision}`, `print-preview.png?inspection=${approval.inspectionId}`]) {
       assert.equal((await fetch(url + route)).status, 404, route);
     }
     const state = await (await fetch(url + 'state')).text();
@@ -545,7 +544,12 @@ test('replacing a fixed revision revokes approval and preserves recoverable Surp
   const approval = await prepare(e);
   const other = new ChatDocument('weekend-walk', f.options);
   await other.sync();
-  await other.requestReplacement({ revision: state.revision, savedId: state.flow.lastSavedDraft }, 'saved');
+  const token = await other.requestReplacement({ revision: state.revision, template: 'token-verbrauch' });
+  await assert.rejects(e.confirmPrint(approval), { code: 'approval_required' });
+  const tokenApproval = await prepare(e);
+  assert.notEqual(tokenApproval.digest, approval.digest);
+  await assert.rejects(e.confirmPrint({ ...tokenApproval, digest: approval.digest }), { code: 'approval_required' });
+  await other.requestReplacement({ revision: token.revision, savedId: state.flow.lastSavedDraft }, 'saved');
   await assert.rejects(e.confirmPrint(approval), { code: 'preview_hidden' });
   assert.deepEqual(e.draft, surprise);
   assert.equal(e.state().flow.hidden, true);

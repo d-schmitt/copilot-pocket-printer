@@ -1,6 +1,6 @@
 # Chat-to-print V2
 
-Start with **Daily card**, **Focus list** or **Vortragsnotiz** in the gallery. For Daily card and Focus list,
+Start with **Daily card**, **Focus list**, **Vortragsnotiz** or **Token-Verbrauch** in the gallery. For Daily card and Focus list,
 describe changes in normal Copilot chat. The agent sends a bounded
 document to the canvas; the existing offline renderer wraps it at readable,
 fixed sizes. Ask in chat for revisions. There is no second chat, content form,
@@ -30,6 +30,12 @@ other inputs are retrieved or processed, and no wait or external work is
 simulated. The selected magician illustration is a cover only. The fixed paper
 artwork cannot be changed through `update_document`; use `request_template`
 with `template: "vortragsnotiz"` to select it.
+
+**Token-Verbrauch** is a scripted demo, not a usage report or a true limit
+notification. It retrieves and calculates no usage, billing or quota data.
+The cover states this, and the paper uses only the approved fixed message.
+Select it with `request_template` and `template: "token-verbrauch"`; chat
+cannot edit either fixed template.
 
 The paper raster uses GitHub's official [Primer Octicons mark](https://github.com/primer/octicons/blob/e6626e159c4ba786d512e252182b62617014c752/icons/mark-github-24.svg)
 in black on white, aspect ratio preserved, above a separate plain-text caption.
@@ -232,8 +238,9 @@ the canvas requires the exact inspected image to load before enabling Print.
 A late image load, render or poll cannot restore approval for hidden or revised
 content.
 
-Vortragsnotiz is the only exception: the trusted **Notiz ohne Vorschau drucken**
-click approves the inspected, digest-pinned 384-dot raster for the explicit
+Vortragsnotiz and Token-Verbrauch are the only exceptions: the trusted
+**Notiz ohne Vorschau drucken** or **Demo ohne Vorschau drucken** click
+approves the corresponding inspected, digest-pinned 384-dot raster for the explicit
 target. The canvas only serves the cover; neither image endpoint serves the
 artwork, even after submission. The private helper inspection, job identity,
 durable claim and confirmation policy are unchanged. The native helper displays

@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { objectKeys } from './draft.mjs';
 import { PreviewError } from './png.mjs';
 import { documentSchema, documentIdSchema, requireDocumentId, validateDocument, renderDocument, documentStore, recordFlow } from './document.mjs';
-import { templateNames, templateOf, templateDocument, revealTemplate } from './templates.mjs';
+import { templateNames, templateOf, templateDocument } from './templates.mjs';
 import { fixedDigest } from './fixed-template.mjs';
 import { servePanel, readJson } from './loopback.mjs';
 
@@ -20,27 +20,28 @@ export class ChatDocument extends CardEditor {
     this.pendingReplacement = null;
     this.lastSavedDraft = null;
     this.drawSeed = options.drawSeed ?? (() => randomInt(0x100000000));
-    this.render = document => document.layout !== revealTemplate && options.render
+    this.render = document => !fixedDigest(document.layout) && options.render
       ? options.render(document) : renderDocument(document, { surpriseSeed: this.flow.surpriseSeed });
   }
-  fixedTemplate() { return this.draft?.layout === revealTemplate; }
+  fixedTemplateDigest() { return fixedDigest(this.draft?.layout); }
   openForPrint() {
     return this.view === 'preview' && !this.pendingReplacement &&
       (this.flow.template !== 'surprise' || this.revealedRevision === this.revision);
   }
-  previewVisible() { return this.openForPrint() && !this.fixedTemplate(); }
+  previewVisible() { return this.openForPrint() && !this.fixedTemplateDigest(); }
   requirePrintView() {
     if (!this.openForPrint()) throw new PreviewError('preview_hidden', 'Open this card and reveal its current preview before preparing or approving a print.');
-    if (this.fixedTemplate() && this.imageMetadata?.sha256 !== fixedDigest) {
+    const digest = this.fixedTemplateDigest();
+    if (digest && this.imageMetadata?.sha256 !== digest) {
       throw new PreviewError('preview_not_ready', 'The current fixed template did not render. Nothing was approved.');
     }
   }
   state(browser = false) {
     const { draft, saved, ...state } = super.state(browser);
-    const fixed = this.fixedTemplate();
+    const digest = this.fixedTemplateDigest();
     let prepared = this.openForPrint() ? state.prepared : null;
-    if (fixed) {
-      if (browser && prepared?.digest === fixedDigest) {
+    if (digest) {
+      if (browser && prepared?.digest === digest) {
         const { estimatedPaperMm, ...approval } = prepared;
         prepared = approval;
       } else prepared = null;
@@ -86,8 +87,8 @@ export class ChatDocument extends CardEditor {
       const previous = await this.documents.load();
       if (input.revision !== previous.revision) throw new PreviewError('stale_document', 'This document changed in another panel. Read get_document before revising it.');
       const previousFlow = recordFlow(previous);
-      if (previousFlow.template === revealTemplate || templateOf(input.document) === revealTemplate) {
-        throw new PreviewError('fixed_template', 'Vortragsnotiz cannot be edited in chat. Choose a template to change cards.');
+      if (fixedDigest(previousFlow.template) || fixedDigest(templateOf(input.document))) {
+        throw new PreviewError('fixed_template', 'Fixed demo templates cannot be edited in chat. Choose a template to change cards.');
       }
       if (previousFlow.customized && previousFlow.template && previousFlow.template !== templateOf(input.document)) {
         throw new PreviewError('replacement_required', 'This card has chat edits. Request a template change and let the user choose Save as draft, Replace without saving or Cancel.');
@@ -114,7 +115,7 @@ export class ChatDocument extends CardEditor {
     this.mutable();
     objectKeys(input, kind === 'template' ? ['revision', 'template'] : ['revision', 'savedId']);
     if (kind === 'template' && !templateNames.includes(input.template)) {
-      throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Vortragsnotiz.');
+      throw new PreviewError('unknown_template', 'Choose Daily card, Focus list, Vortragsnotiz or Token-Verbrauch.');
     }
     let record;
     await this.documents.locked(async () => {
@@ -209,7 +210,8 @@ export class ChatDocument extends CardEditor {
     return this.documents.locked(async () => {
       await this.sync();
       this.requirePrintView();
-      if (this.fixedTemplate() && this.prepared?.intent.digest !== fixedDigest) {
+      const digest = this.fixedTemplateDigest();
+      if (digest && this.prepared?.intent.digest !== digest) {
         throw new PreviewError('approval_required', 'Explicit approval of the fixed template and target is required.');
       }
       if (input.target !== this.selectedPrinter?.id) throw new PreviewError('stale_approval', 'The selected printer changed.');
@@ -244,7 +246,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
     ['get_document', 'Read the document, revision and preview state before making a revision. Never prints.', {}],
     ['update_document', 'Revise the active card using daily-card offline inputs, focus with exactly three priorities, surprise with an optional message, or generic text/checklist blocks. Chat edits customize content; Surprise rerolls and hides until user reveal. Request template changes separately. Never prints.',
       { revision: { type: 'integer', minimum: 1 }, document: documentSchema }],
-    ['request_template', 'Choose Daily card, Focus list or fixed Vortragsnotiz. Legacy Surprise remains supported. Customized cards require a user decision in the canvas before replacement.',
+    ['request_template', 'Choose Daily card, Focus list, or the fixed Vortragsnotiz and Token-Verbrauch demos. Legacy Surprise remains supported. Customized cards require a user decision in the canvas before replacement.',
       { revision: { type: 'integer', minimum: 1 }, template: { enum: templateNames } }],
     ['list_saved_documents', 'List private saved card snapshots for this document. Never prints.', {}],
     ['open_saved_document', 'Open a saved card snapshot; prompts in the canvas before replacing chat-customized content.',
@@ -254,7 +256,7 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
   ];
   return {
     id: 'pocket-printer-chat', displayName: 'Pocket Printer V2',
-    description: 'Choose Daily card, Focus list or Vortragsnotiz. The user reviews the exact preview before Print, except for the fixed Vortragsnotiz paper reveal.',
+    description: 'Choose Daily card, Focus list, Vortragsnotiz or Token-Verbrauch. The user reviews the exact preview before Print, except for the two fixed demo paper reveals.',
     inputSchema: { type: ['object', 'null'], properties: { documentId: documentIdSchema },
       required: [], additionalProperties: false },
     actions: actions.map(([name, description, properties]) => ({

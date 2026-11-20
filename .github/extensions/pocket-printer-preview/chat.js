@@ -10,7 +10,7 @@ async function request(route, input) {
 }
 function scanning() { return ['scanning', 'stopping'].includes(state?.discovery?.state); }
 function visible() { return (!state?.flow || state.flow.view === 'preview') && !state?.flow?.hidden && !state?.flow?.pendingReplacement; }
-function coverOnly() { return state?.flow?.template === 'vortragsnotiz'; }
+function coverOnly() { return ['vortragsnotiz', 'token-verbrauch'].includes(state?.flow?.template); }
 function printableRevision() { return state?.renderedRevision === state?.revision && (coverOnly() || Boolean(state?.image)); }
 function canPrint() {
   const p = state?.prepared;
@@ -30,7 +30,7 @@ function controls() {
   $('#refresh').disabled = !currentState || !visible() || busy || scanning() || !state?.selectedPrinter || !printableRevision();
   $('#status').hidden = !lastJobId;
   $('#status').disabled = busy;
-  for (const id of ['template-daily', 'template-focus', 'template-vortragsnotiz', 'back', 'resume', 'save-replace', 'replace', 'cancel-replace']) {
+  for (const id of [...galleryTemplates.map(template => `template-${template}`), 'back', 'resume', 'save-replace', 'replace', 'cancel-replace']) {
     $(`#${id}`).disabled = busy;
   }
   $('#reveal').disabled = busy || state?.renderedRevision !== state?.revision;
@@ -48,7 +48,9 @@ function draw(value) {
   $('#card-view').hidden = flow.view !== 'preview' || Boolean(pending);
   $('#replacement').hidden = !pending;
   $('#surprise-cover').hidden = !flow.hidden;
-  $('#note-cover').hidden = !cover;
+  const tokenCover = flow.template === 'token-verbrauch';
+  $('#note-cover').hidden = flow.template !== 'vortragsnotiz';
+  $('#token-cover').hidden = !tokenCover;
   $('#preview-section').hidden = Boolean(flow.hidden) || cover;
   $('#printer-section').hidden = Boolean(flow.hidden);
   $('#chat-hint').hidden = cover;
@@ -57,7 +59,7 @@ function draw(value) {
     ['#scan', 'Find printer', 'Drucker finden'],
     ['#stop', 'Stop scan', 'Suche stoppen'],
     ['label[for="target"]', 'Printer', 'Drucker'],
-    ['#print', 'Print', 'Notiz ohne Vorschau drucken'],
+    ['#print', 'Print', tokenCover ? 'Demo ohne Vorschau drucken' : 'Notiz ohne Vorschau drucken'],
     ['#refresh', 'Refresh preview', 'Druck vorbereiten'],
     ['#status', 'Check print status', 'Druckstatus prüfen']
   ]) {
@@ -154,7 +156,8 @@ async function autoInspect() {
   if (visible() && state?.selectedPrinter && !state.prepared && !state.error &&
       attempted !== `${state.revision}:${state.selectedPrinter.id}`) await inspect();
 }
-for (const template of ['daily', 'focus', 'vortragsnotiz']) {
+const galleryTemplates = ['daily', 'focus', 'vortragsnotiz', 'token-verbrauch'];
+for (const template of galleryTemplates) {
   $(`#template-${template}`).addEventListener('click', () =>
     operate('request_template', { revision: state.revision, template }));
 }

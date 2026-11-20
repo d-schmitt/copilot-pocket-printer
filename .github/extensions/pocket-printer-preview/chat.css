@@ -25,10 +25,11 @@ button:disabled { opacity: .5; cursor: default; }
 .template-kicker { font-size: 11px; color: var(--text-color-muted, #59636e); letter-spacing: 1px; }
 .template:hover { border-color: var(--text-color-default, #1f2328); }
 .back { margin-top: 20px; }
-#note-cover { text-align: center; padding: 18px 16px; border: 1px solid var(--border-color-default, #d1d9e0); border-radius: 6px; }
+#note-cover, .demo-cover { text-align: center; padding: 18px 16px; border: 1px solid var(--border-color-default, #d1d9e0); border-radius: 6px; }
+.demo-cover p { margin: 0; }
 #note-cover p { margin: 0 0 12px; }
 #note-cover img { display: block; width: min(100%, 200px); height: auto; margin: auto; border-radius: 4px; }
-#note-cover:not([hidden]) ~ #printer-section .row { flex-wrap: wrap; }
+:is(#note-cover, .demo-cover):not([hidden]) ~ #printer-section .row { flex-wrap: wrap; }
 @media (max-width: 390px) {
   #note-cover img { width: min(100%, 176px); }
 }

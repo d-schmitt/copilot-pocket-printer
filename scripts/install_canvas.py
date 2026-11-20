@@ -20,7 +20,7 @@ FILES = ("extension.mjs", "editor.mjs", "editor.js", "editor.html", "editor.css"
          "png.mjs", "view.css")
 V2_FILES = ("editor.mjs", "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
             "png.mjs", "document.mjs", "daily-document.mjs", "templates.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css",
-            "fixed-template.mjs", "template-cover.png", "template-raster.png", "octicons-license.txt")
+            "fixed-template.mjs", "template-cover.png", "template-raster.png", "token-raster.png", "octicons-license.txt")
 DAILY_FILES = ("__init__.py", "model.py", "template.py", "canvas.py")
 RELOCATIONS = {
     "draft.mjs": ("../../../.build/debug/card-renderer", "./runtime/card-renderer"),
@@ -168,8 +168,17 @@ def verify(target, node, v2=False):
             const cover = await fetch(panel.url + 'template-cover.png');
             assert.equal(cover.status, 200);
             assert.equal(cover.headers.get('content-type'), 'image/png');
-            for (const asset of ['template-raster.png', 'image.png?revision=' + state.revision, 'print-preview.png']) {
-              assert.equal((await fetch(panel.url + asset)).status, 404);
+            for (const template of ['vortragsnotiz', 'token-verbrauch']) {
+              const picked = await post('request_template', { revision: state.revision, template });
+              assert.equal(picked.status, 200);
+              state = await picked.json();
+              assert.equal(state.error, null);
+              assert.equal(state.flow.template, template);
+              assert.equal(state.renderedRevision, state.revision);
+              assert.equal(state.image, null);
+              for (const asset of ['template-raster.png', 'token-raster.png', 'image.png?revision=' + state.revision, 'print-preview.png']) {
+                assert.equal((await fetch(panel.url + asset)).status, 404);
+              }
             }
           } finally { await canvas.onClose(ctx); }
           assert.equal(helperCalls, 0);

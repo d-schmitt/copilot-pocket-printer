@@ -1,18 +1,18 @@
 import { objectKeys } from './draft.mjs';
 import { PreviewError } from './png.mjs';
+import { fixedTemplateNames } from './fixed-template.mjs';
 
 const shape = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 export const focusSchema = shape({ version: { const: 1 }, layout: { const: 'focus' },
   priorities: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string', maxLength: 512 } } });
 export const surpriseSchema = shape({ version: { const: 1 }, layout: { const: 'surprise' },
   message: { type: 'string', maxLength: 512 } });
-export const revealTemplate = 'vortragsnotiz';
 // Surprise remains available to existing SDK callers and saved documents, not in the picker.
-export const templateNames = ['daily', 'focus', revealTemplate, 'surprise'];
+export const templateNames = ['daily', 'focus', ...fixedTemplateNames, 'surprise'];
 export function templateOf(document) {
   if (!document) return null;
   return document.layout === 'daily-card' ? 'daily' :
-    ['focus', 'surprise', revealTemplate].includes(document.layout) ? document.layout : 'custom';
+    templateNames.includes(document.layout) && document.layout !== 'daily' ? document.layout : 'custom';
 }
 function line(value) {
   if (typeof value !== 'string' || Buffer.byteLength(value) > 512 || /[\x00-\x1f\x7f]/.test(value)) {
@@ -26,7 +26,7 @@ export function validateTemplateDocument(document) {
       throw new PreviewError('invalid_document', 'Focus list has exactly three priorities.');
     }
     document.priorities.forEach(line);
-  } else if (document.layout === revealTemplate) {
+  } else if (fixedTemplateNames.includes(document.layout)) {
     objectKeys(document, ['version', 'layout']);
   } else {
     objectKeys(document, ['version', 'layout', 'message']);
@@ -63,8 +63,8 @@ export function templateBlocks(document, seed) {
 export function templateDocument(name) {
   if (name === 'focus') return { version: 1, layout: 'focus', priorities: ['', '', ''] };
   if (name === 'surprise') return { version: 1, layout: 'surprise', message: '' };
-  if (name === revealTemplate) return { version: 1, layout: revealTemplate };
-  if (name !== 'daily') throw new PreviewError('unknown_template', 'Choose Daily card, Focus list or Surprise.');
+  if (fixedTemplateNames.includes(name)) return { version: 1, layout: name };
+  if (name !== 'daily') throw new PreviewError('unknown_template', 'Choose a supported template.');
   const stamp = time => `2026-11-17T${time}:00+01:00`;
   return {
     version: 1, layout: 'daily-card',
