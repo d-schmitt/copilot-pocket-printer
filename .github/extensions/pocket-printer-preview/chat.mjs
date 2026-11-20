@@ -40,10 +40,11 @@ export class ChatDocument extends CardEditor {
     const { draft, saved, ...state } = super.state(browser);
     const digest = this.fixedTemplateDigest();
     let prepared = this.openForPrint() ? state.prepared : null;
+    if (this.prepared?.intent.copyOf && !this.prepared.claimed) prepared = null;
     if (digest) {
       if (browser && prepared?.digest === digest) {
         const { estimatedPaperMm, ...approval } = prepared;
-        prepared = approval;
+        prepared = { ...approval, isCopy: Boolean(this.prepared.intent.copyOf) };
       } else prepared = null;
     }
     return { ...state, image: this.previewVisible() ? state.image : null,
@@ -202,7 +203,42 @@ export class ChatDocument extends CardEditor {
       if (['scanning', 'stopping'].includes(this.discovery.state)) {
         throw new PreviewError('discovery_busy', 'Wait for printer discovery to stop.');
       }
-      return super.inspectForPrint(input);
+      return super.inspectForPrint(input, { recoverLatest: this.draft?.layout === 'token-verbrauch' });
+    });
+  }
+  async repeatPrint(input) {
+    objectKeys(input, ['revision', 'target', 'jobId', 'inspectionId', 'paperApproved']);
+    return this.documents.locked(async () => {
+      await this.sync();
+      this.requirePrintView();
+      const previous = this.prepared;
+      if (this.draft?.layout !== 'token-verbrauch' || !previous?.claimed ||
+          input.paperApproved !== true || input.revision !== this.revision ||
+          input.target !== this.selectedPrinter?.id || input.target !== previous.intent.target ||
+          input.inspectionId !== previous.inspectionId || input.jobId !== previous.intent.jobId ||
+          previous.intent.digest !== this.fixedTemplateDigest()) {
+        throw new PreviewError('copy_approval_required', 'Approve one new copy of the exact demo for the selected printer.');
+      }
+      if (['scanning', 'stopping'].includes(this.discovery.state)) {
+        throw new PreviewError('discovery_busy', 'Wait for printer discovery to stop.');
+      }
+      // Reinspect and reserve under the ledger lock. On pre-claim failure the next
+      // approval must be another repeat click, never an ordinary Print click.
+      try {
+        await super.inspectForPrint({ revision: input.revision, target: input.target }, { copyOf: input.jobId });
+        const p = this.prepared;
+        return await super.confirmPrint({ revision: p.revision, target: p.intent.target,
+          jobId: p.intent.jobId, digest: p.intent.digest, bitmapDigest: p.intent.bitmapDigest,
+          inspectionId: p.inspectionId, approvalToken: p.approvalToken, paperApproved: true });
+      } catch (error) {
+        if (!this.closed && this.revision === input.revision && this.selectedPrinter?.id === input.target &&
+            this.openForPrint() && (this.prepared?.intent.copyOf === input.jobId || !this.prepared)) {
+          // Revoke the panel snapshot so a peer's newly claimed child is recovered
+          // by reinspection rather than retrying the old predecessor.
+          this.invalidatePrint();
+        }
+        throw error;
+      }
     });
   }
   async confirmPrint(input) {
@@ -211,12 +247,21 @@ export class ChatDocument extends CardEditor {
       await this.sync();
       this.requirePrintView();
       const digest = this.fixedTemplateDigest();
-      if (digest && this.prepared?.intent.digest !== digest) {
+      if (this.prepared?.intent.copyOf || (digest && this.prepared?.intent.digest !== digest)) {
         throw new PreviewError('approval_required', 'Explicit approval of the fixed template and target is required.');
       }
       if (input.target !== this.selectedPrinter?.id) throw new PreviewError('stale_approval', 'The selected printer changed.');
       return super.confirmPrint(input);
     });
+  }
+  async printStatus(input) {
+    objectKeys(input, ['jobId']);
+    const snapshot = this.job;
+    const generation = this.printGeneration;
+    const job = await this.printing.status(input.jobId);
+    if (this.job === snapshot && this.printGeneration === generation && !this.dispatching && !this.closed &&
+        (!this.prepared?.claimed || this.prepared.intent.jobId === job.jobId)) this.job = job;
+    return job;
   }
 }
 
@@ -235,9 +280,8 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
     if (name === 'list_saved_documents') { objectKeys(input, []); return editor.documents.locked(() => editor.documents.listSaved()); }
     if (name === 'open_saved_document') return editor.requestReplacement(input, 'saved');
     if (name === 'get_print_status') {
-      objectKeys(input, ['jobId']);
-      editor.job = await editor.printing.status(input.jobId);
-      return editor.state();
+      const job = await editor.printStatus(input);
+      return { ...editor.state(), job };
     }
     if (name === 'list_prints') { objectKeys(input, []); return editor.printing.ledger.list(); }
     throw new PreviewError('unknown_action', 'Unsupported chat canvas action.');
@@ -306,7 +350,8 @@ export function chatCanvas(ErrorType = PreviewError, options = {}) {
               ['select_printer', input => editor.selectPrinter(input)],
               ['inspect_for_print', input => editor.inspectSelected(input)],
               ['confirm_print', input => editor.confirmPrint(input)],
-              ['get_print_status', input => invoke(editor, 'get_print_status', input)]
+              ['repeat_print', input => editor.repeatPrint(input)],
+              ['get_print_status', input => editor.printStatus(input)]
             ].map(([name, operation]) => [name, async req => {
               await operation(await readJson(req));
               return editor.state(true);

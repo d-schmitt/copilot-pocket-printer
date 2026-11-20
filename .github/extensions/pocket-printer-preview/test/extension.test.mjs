@@ -58,7 +58,8 @@ test('editor dependencies isolate helper IPC to printing and process launch to t
     'editor.mjs': ['node:crypto', './png.mjs', './draft.mjs', './private-store.mjs', './loopback.mjs'],
     'draft.mjs': ['node:child_process', 'node:fs/promises', 'node:os', 'node:path', 'node:url', './png.mjs'],
     'private-store.mjs': ['node:fs', 'node:fs/promises', 'node:os', 'node:path', 'node:crypto', './png.mjs', './draft.mjs'],
-    'printing.mjs': ['node:crypto', 'node:fs/promises', 'node:path', '../../../bridge/ipc.mjs', './png.mjs', './private-store.mjs', './draft.mjs']
+    'printing.mjs': ['node:crypto', 'node:fs/promises', 'node:path', '../../../bridge/ipc.mjs', './png.mjs', './private-store.mjs', './draft.mjs', './fixed-template.mjs'],
+    'fixed-template.mjs': ['node:crypto', 'node:fs/promises', './png.mjs']
   };
   for (const [file, allowed] of Object.entries(dependencies)) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');

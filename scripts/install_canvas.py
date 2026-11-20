@@ -17,7 +17,7 @@ V2_NAME = "pocket-printer-chat"
 MANIFEST = ".pocket-canvas-install.json"
 FILES = ("extension.mjs", "editor.mjs", "editor.js", "editor.html", "editor.css",
          "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
-         "png.mjs", "view.css")
+         "png.mjs", "view.css", "fixed-template.mjs")
 V2_FILES = ("editor.mjs", "draft.mjs", "private-store.mjs", "printing.mjs", "loopback.mjs",
             "png.mjs", "document.mjs", "daily-document.mjs", "templates.mjs", "chat.mjs", "chat.js", "chat.html", "chat.css",
             "fixed-template.mjs", "template-cover.png", "template-raster.png", "token-raster.png", "octicons-license.txt")

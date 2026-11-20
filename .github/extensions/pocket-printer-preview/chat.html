@@ -71,10 +71,17 @@
       <label for="target">Printer</label>
       <select id="target"><option value="">Select a discovered printer</option></select>
       <p id="scan-status" class="muted"></p>
-      <p id="ready" role="status"></p>
-      <div class="row"><button id="print" class="primary" disabled>Print</button><button id="refresh">Refresh preview</button></div>
-      <p id="job" role="status"></p>
-      <button id="status" hidden>Check print status</button>
+      <p id="job" role="status" hidden></p>
+      <div class="row">
+        <button id="print" class="primary" disabled>Drucken</button>
+        <button id="status" hidden>Status aktualisieren</button>
+      </div>
+      <details id="print-details">
+        <summary>Details</summary>
+        <p id="ready"></p>
+        <p id="job-detail" class="muted" hidden></p>
+        <button id="refresh" hidden>Vorbereitung wiederholen</button>
+      </details>
       </section>
     </div>
   </main>

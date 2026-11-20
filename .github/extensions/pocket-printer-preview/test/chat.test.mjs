@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dailyFixture } from './daily-fixture.mjs';
 import { templateDocument, templateBlocks } from '../templates.mjs';
-import { fixedDigest } from '../fixed-template.mjs';
+import { fixedDigest, renderFixedTemplate } from '../fixed-template.mjs';
 
 const target = '11111111-2222-4333-8444-555555555555';
 const document = { version: 1, blocks: [
@@ -52,7 +52,7 @@ async function fixture(t, { lostSubmit = false } = {}) {
   const options = { documents: documentStore('weekend-walk', root), printing: new Printing({ helper, ledger }) };
   const editor = new ChatDocument('weekend-walk', options);
   await editor.adopt(await options.documents.initialize());
-  return { root, calls, helper, ledger, options, editor, secondTarget };
+  return { root, calls, helper, ledger, options, editor, secondTarget, receipts };
 }
 async function prepare(editor) {
   editor.resumePreview({});
@@ -556,4 +556,91 @@ test('replacing a fixed revision revokes approval and preserves recoverable Surp
   await e.reveal({ revision: e.revision });
   await assert.rejects(e.confirmPrint(approval), { code: 'approval_required' });
   assert.equal(f.calls.includes('submit_png'), false);
+});
+
+test('Token-Verbrauch repeats require fresh approval, recover the newest claim and never replay a predecessor', async t => {
+  const f = await fixture(t), e = f.editor;
+  await e.requestReplacement({ revision: 1, template: 'token-verbrauch' });
+  const initial = await prepare(e);
+  const repeat = ({ revision, target, jobId, inspectionId }, paperApproved = true) => ({
+    revision, target, jobId, inspectionId, paperApproved
+  });
+  await assert.rejects(e.repeatPrint(repeat(initial)), { code: 'copy_approval_required' });
+  await e.confirmPrint(initial);
+  await assert.rejects(e.repeatPrint(repeat(initial, false)), { code: 'copy_approval_required' });
+  const twin = new ChatDocument('weekend-walk', f.options);
+  await twin.sync();
+  const twinApproval = await prepare(twin);
+  f.receipts.get(initial.jobId).state = 'in_progress';
+  await assert.rejects(e.repeatPrint(repeat(initial)), { code: 'unresolved_dispatch' });
+  assert.equal((await f.ledger.list()).length, 1, 'No repeat intent is created for an active job');
+  f.receipts.get(initial.jobId).state = 'uncertain';
+  f.receipts.get(initial.jobId).outcome_acknowledged = true;
+  const refreshed = await prepare(e);
+  await assert.rejects(e.repeatPrint(repeat(refreshed)), { code: 'unresolved_dispatch' });
+  assert.equal((await f.ledger.list()).length, 1, 'Even acknowledged uncertainty cannot create a repeat');
+  f.receipts.get(initial.jobId).state = 'submitted_only';
+  const ready = await prepare(e);
+  const raced = await Promise.allSettled([e.repeatPrint(repeat(ready)), twin.repeatPrint(repeat(twinApproval))]);
+  assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1);
+  const copy = raced.find(result => result.status === 'fulfilled').value.job;
+  assert.notEqual(copy.jobId, initial.jobId);
+  const original = await f.ledger.find(initial.jobId);
+  const successor = await f.ledger.find(copy.jobId);
+  assert.equal(successor.copyOf, original.jobId);
+  assert.equal(successor.original, (await renderFixedTemplate('token-verbrauch')).toString('base64'));
+  assert.equal(successor.original, original.original);
+  assert.equal(successor.bitmapDigest, original.bitmapDigest);
+  assert.equal(f.calls.filter(call => call === 'submit_png').length, 2);
+
+  const reopened = new ChatDocument('weekend-walk', f.options);
+  await reopened.sync();
+  f.receipts.delete(copy.jobId);
+  const recovered = await prepare(reopened);
+  assert.equal(recovered.jobId, copy.jobId, 'Reload recovers the latest claim even if its receipt is missing');
+  assert.equal((await f.options.printing.status(copy.jobId)).state, 'uncertain');
+  await assert.rejects(reopened.repeatPrint(repeat(recovered)), { code: 'unresolved_dispatch' });
+  assert.equal((await f.ledger.list()).length, 2);
+  assert.equal(f.calls.filter(call => call === 'submit_png').length, 2);
+});
+
+test('Vortragsnotiz does not acquire a repeat action', async t => {
+  const f = await fixture(t), e = f.editor;
+  await e.requestReplacement({ revision: 1, template: 'vortragsnotiz' });
+  const first = await prepare(e);
+  await e.confirmPrint(first);
+  const { revision, target, jobId, inspectionId } = first;
+  await assert.rejects(e.repeatPrint({ revision, target, jobId, inspectionId, paperApproved: true }),
+    { code: 'copy_approval_required' });
+  assert.equal((await f.ledger.list()).length, 1);
+});
+
+test('a copy rejected before admission can be followed only by a newly approved job', async t => {
+  const f = await fixture(t), e = f.editor;
+  const helper = f.options.printing.helper;
+  let rejectNext = false;
+  f.options.printing.helper = async (method, fields) => {
+    if (method === 'submit_png' && rejectNext) {
+      rejectNext = false;
+      throw Object.assign(new Error('Synthetic native rejection'), { helperReported: true, code: 'busy' });
+    }
+    return helper(method, fields);
+  };
+  await e.requestReplacement({ revision: 1, template: 'token-verbrauch' });
+  const first = await prepare(e);
+  await e.confirmPrint(first);
+  const approveCopy = ({ revision, target, jobId, inspectionId }) => ({
+    revision, target, jobId, inspectionId, paperApproved: true
+  });
+  rejectNext = true;
+  const rejected = (await e.repeatPrint(approveCopy(first))).job;
+  assert.equal(rejected.state, 'rejected_before_admission');
+  await assert.rejects(e.repeatPrint(approveCopy(first)), { code: 'copy_approval_required' });
+  const recovered = await prepare(e);
+  assert.equal(recovered.jobId, rejected.jobId);
+  assert.equal(e.state(true).prepared.isCopy, true);
+  const next = (await e.repeatPrint(approveCopy(recovered))).job;
+  assert.equal(next.state, 'submitted_only');
+  assert.notEqual(next.jobId, rejected.jobId);
+  assert.equal((await f.ledger.find(next.jobId)).copyOf, rejected.jobId);
 });

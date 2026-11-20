@@ -228,7 +228,9 @@ selects a discovered device, and waits for discovery to finish. No scan or
 printer selection occurs on open or chat update.
 
 The helper's exact inspected bitmap replaces the draft in that same region.
-Print stays disabled until that image loads. Estimated length follows the
+Preparation starts automatically after printer selection, and **Drucken**
+stays disabled until that image loads. If preparation fails, **Details**
+contains the diagnostic and a preparation-only retry. Estimated length follows the
 existing 203-dpi convention, including 80 dots of feed:
 `(height + 80) / 203 * 25.4` mm. Physical length is approximate.
 
@@ -239,7 +241,7 @@ A late image load, render or poll cannot restore approval for hidden or revised
 content.
 
 Vortragsnotiz and Token-Verbrauch are the only exceptions: the trusted
-**Notiz ohne Vorschau drucken** or **Demo ohne Vorschau drucken** click
+**Ohne Vorschau drucken** click
 approves the corresponding inspected, digest-pinned 384-dot raster for the explicit
 target. The canvas only serves the cover; neither image endpoint serves the
 artwork, even after submission. The private helper inspection, job identity,
@@ -249,16 +251,29 @@ while an AI-client-mode job runs. Do not share the helper window or the full
 desktop if the reveal must stay off-screen. Native mode still explicitly asks
 for approval there; AI-client mode requires an existing opt-in.
 
-The fixed raster follows the existing at-most-once ledger key (payload,
+Initial approvals follow the existing at-most-once ledger key (payload,
 selected printer and confirmation mode). Reopening the template or switching
-cards does not create a fresh job for the same key. Check the original job
-instead of attempting to replay it.
+cards does not create a fresh job for the same key. For **Token-Verbrauch** only,
+**Noch einmal drucken** approves one new copy after the previous copy is verified
+as transferred or cancelled before transmission. The retained predecessor has at
+most one successor, with a fresh job ID and identical original and inspected
+bitmap digests for the same printer and mode. No copy is created or dispatched
+while an earlier retained dispatch is active or uncertain, even if an uncertain
+outcome was acknowledged. A copy explicitly rejected by the helper before
+admission can be followed by a newly approved copy, never by resending its ID.
+Reopening recovers the latest claimed copy rather than replaying an older job.
+Copies count toward the existing 64-intent storage limit.
+After the first copy intent is recorded, older canvas packages cannot read the
+new shared ledger record. Update V1 and V2 together if you use both; restoring
+only old canvas files does not roll back the ledger. Do not remove its claims.
 
 The user's trusted **Print** click submits the inspected image to the selected
 printer once. Existing independent helper launch and native opt-in are unchanged.
 Native confirmation mode still requires its helper approval. Transport submission
-is not proof of paper output. Use **Check print status** for the original job;
-never automatically retry or replace an uncertain job.
+is not proof of paper output. The canvas checks an active job automatically;
+**Status aktualisieren** appears for uncertain outcomes or status errors and
+only queries the original job. Never automatically retry or replace an
+uncertain job.
 
 The existing global print-intent directory and content/target/mode identity are
 shared with V1. Document revisions are private records under the existing canvas
