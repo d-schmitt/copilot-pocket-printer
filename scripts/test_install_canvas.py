@@ -65,6 +65,39 @@ class CanvasInstallationTests(unittest.TestCase):
         for obsolete in ("preview.mjs", "view.html", "view.js", "sample.png"):
             self.assertFalse((self.target / obsolete).exists())
 
+    def test_v2_stages_beside_v1_and_survives_source_removal(self):
+        self.install()
+        original = installer.managed(self.target)
+        target = self.root / "extensions" / installer.V2_NAME
+        self.assertEqual(installer.package(self.source, self.renderer, self.ipc, target, self.node, v2=True), "Created")
+        self.assertEqual(installer.package(self.source, self.renderer, self.ipc, target, self.node, v2=True), "Unchanged")
+        self.assertEqual(installer.managed(self.target), original)
+        self.source.rename(self.root / "unavailable source")
+        self.ipc.rename(self.root / "unavailable ipc")
+        self.assertIn("V2 initial/revised", installer.verify(target, self.node, v2=True))
+        for path in target.rglob("*.mjs"):
+            self.assertNotIn(str(installer.ROOT), path.read_text())
+            self.assertNotIn("../../../", path.read_text())
+        self.assertIn("chatCanvas", (target / "extension.mjs").read_text())
+        self.assertIn("'Copilot Pocket Printer Canvas'", (target / "private-store.mjs").read_text())
+        self.assertFalse((target / "editor.html").exists())
+        self.assertEqual({path.name for path in (target / "runtime/daily_card").iterdir()}, set(installer.DAILY_FILES))
+        for file in installer.DAILY_FILES:
+            self.assertEqual((target / "runtime/daily_card" / file).read_bytes(),
+                             (installer.ROOT / "daily_card" / file).read_bytes())
+
+    def test_staging_overlap_protects_both_installed_versions_before_mutation(self):
+        self.install()
+        extensions = self.target.parent
+        before = installer.inventory(extensions)
+        for name in (installer.NAME, installer.V2_NAME):
+            for target in (extensions / name, extensions / name / installer.V2_NAME,
+                           extensions / name / "nested" / installer.NAME, extensions):
+                with self.assertRaisesRegex(installer.InstallError, "either user installation"):
+                    installer.ensure_staging_is_separate(target, extensions)
+        self.assertEqual(installer.inventory(extensions), before)
+        installer.ensure_staging_is_separate(self.root / "staging" / installer.V2_NAME, extensions)
+
     def test_unrelated_or_user_modified_extension_is_preserved(self):
         self.target.mkdir(parents=True)
         custom = self.target / "personal.txt"

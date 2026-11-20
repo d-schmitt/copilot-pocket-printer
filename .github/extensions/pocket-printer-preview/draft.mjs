@@ -70,17 +70,23 @@ export function templateFor(draft) {
 }
 
 export async function renderDraft(draft) {
-  const input = JSON.stringify(templateFor(draft));
+  return renderTemplate(templateFor(draft));
+}
+
+export async function renderTemplate(template) {
+  const input = JSON.stringify(template);
   const directory = await mkdtemp(join(tmpdir(), 'pocket-card-render-'));
   const output = join(directory, 'card.png');
   try {
     await new Promise((resolve, reject) => {
       const child = execFile(rendererPath, ['-', output],
-        { timeout: 10_000, maxBuffer: 128 * 1024, windowsHide: true }, error => {
+        { timeout: 10_000, maxBuffer: 128 * 1024, windowsHide: true }, (error, stdout, stderr) => {
           if (!error) { resolve(); return; }
+          const reason = typeof stderr === 'string' && stderr.startsWith('[invalid_card] ')
+            ? stderr.slice(15).trim().slice(0, 512) : null;
           reject(new PreviewError('render_failed', error.code === 'ENOENT'
             ? 'Build the existing renderer first: swift build --product card-renderer.'
-            : 'Rendering failed. Shorten text or reduce content; the current draft cannot be printed.'));
+            : `Rendering failed. ${reason ?? 'The offline renderer did not complete.'} Shorten text or reduce content; nothing was cropped or printed.`));
         });
       child.stdin.on('error', () => { /* The process callback reports the renderer failure. */ });
       child.stdin.end(input);

@@ -43,6 +43,7 @@ public enum CardRenderer {
         case rule
         case sudoku([Int])
         case garden
+        case printer
     }
 
     public static func render(_ data: Data) throws -> RenderedCard {
@@ -150,10 +151,11 @@ public enum CardRenderer {
                 }
                 try append("sudoku", height: 334, drawing: .sudoku(try Sudoku.puzzle(difficulty: difficulty, seed: UInt32(seed))))
             case "art":
-                guard Set(block.keys) == ["kind", "name"], block["name"] as? String == "garden" else {
-                    throw CardError.invalid("The supported self-authored line art is garden.")
+                guard Set(block.keys) == ["kind", "name"],
+                      let name = block["name"] as? String, ["garden", "printer"].contains(name) else {
+                    throw CardError.invalid("Supported self-authored line art: garden or printer.")
                 }
-                try append("art", height: 256, drawing: .garden)
+                try append("art", height: name == "garden" ? 256 : 156, drawing: name == "garden" ? .garden : .printer)
             default:
                 throw CardError.invalid("Unsupported block kind.")
             }
@@ -190,6 +192,8 @@ public enum CardRenderer {
                 }
             case .garden:
                 drawGarden(context, bottom: top - 250)
+            case .printer:
+                drawPrinter(context, bottom: top - 146)
             }
         }
         guard let image = context.makeImage() else { throw CardError.invalid("Cannot create card image.") }
@@ -266,5 +270,19 @@ public enum CardRenderer {
             context.strokePath()
         }
         context.setFillColor(gray: 0, alpha: 1)
+    }
+
+    private static func drawPrinter(_ context: CGContext, bottom: CGFloat) {
+        context.setLineWidth(3)
+        context.stroke(CGRect(x: 130, y: bottom + 88, width: 124, height: 50))
+        context.stroke(CGRect(x: 106, y: bottom + 34, width: 172, height: 54))
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 128, y: bottom + 4, width: 128, height: 56))
+        context.stroke(CGRect(x: 128, y: bottom + 4, width: 128, height: 56))
+        context.setFillColor(gray: 0, alpha: 1)
+        context.fillEllipse(in: CGRect(x: 258, y: bottom + 69, width: 7, height: 7))
+        for y in [20, 33, 46, 105, 118] {
+            context.fill(CGRect(x: 145, y: bottom + CGFloat(y), width: 94, height: 2))
+        }
     }
 }

@@ -32,6 +32,11 @@ Editing and rendering need no helper or printer.
 Its [standalone user-local installation](docs/card-editor.md#available-in-every-copilot-chat)
 makes the editor available outside repository sessions. Availability installation,
 native helper updates and physical printing are separate actions.
+The separate [chat-to-print V2 canvas](docs/chat-to-print.md) accepts headings,
+plain text and checklists from normal Copilot chat, shows one preview, and keeps
+printing behind the user's Print click. Stage it alongside V1 with
+`python3 scripts/install_canvas.py --v2`; installation and activation need
+separate approval.
 Rendering through MCP, automatic calendar acquisition, and
 scheduled delivery remain [roadmap work](#what-this-showcases), not steps needed below.
 

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocket Printer V2</title>
+  <link rel="stylesheet" href="chat.css">
+  <script type="module" src="chat.js"></script>
+</head>
+<body>
+  <main>
+    <header><h1>Pocket Printer</h1><span>CHAT TO PRINT</span></header>
+    <div id="error" role="alert" hidden></div>
+    <section id="gallery" aria-label="Templates">
+      <h2>Start with a card</h2>
+      <p class="muted">Pick a starting point. Make it yours in chat.</p>
+      <button id="resume" hidden>Continue current card</button>
+      <div class="templates">
+        <button id="template-daily" class="template">
+          <span class="template-kicker">01 / YOUR DAY</span><strong>Daily card</strong>
+          <span>Meetings, daylight, a walk and a little smile.</span>
+          <span class="template-foot">Original compact layout</span>
+        </button>
+        <button id="template-focus" class="template">
+          <span class="template-kicker">02 / KEEP IT SIMPLE</span><strong>Focus list</strong>
+          <span>Three empty priorities. You fill them in through chat.</span>
+          <span class="template-foot">One thing at a time</span>
+        </button>
+        <button id="template-surprise" class="template">
+          <span class="template-kicker">03 / A LITTLE MYSTERY</span><strong>Surprise</strong>
+          <span>A printer meme or an Easy/Medium Sudoku. Reveal when ready.</span>
+          <span class="template-foot">No peeking before the preview</span>
+        </button>
+      </div>
+    </section>
+    <section id="replacement" role="dialog" aria-modal="true" aria-labelledby="replacement-title" hidden>
+      <h2 id="replacement-title">Keep your chat edits?</h2>
+      <p>This card contains content you provided or changed in chat. What should happen before switching?</p>
+      <div class="choices">
+        <button id="save-replace">Save as draft</button>
+        <button id="replace">Replace without saving</button>
+        <button id="cancel-replace">Cancel</button>
+      </div>
+    </section>
+    <div id="card-view" hidden>
+      <button id="back" class="back">Back to templates</button>
+      <p id="chat-hint" class="muted">Ask in chat to change this card.</p>
+      <p id="saved-notice" class="muted" role="status" hidden></p>
+      <section id="surprise-cover" hidden>
+        <span class="mystery" aria-hidden="true">?</span>
+        <h2>Your Surprise is ready</h2>
+        <p>Reveal it before deciding whether to print. Every chat edit makes a new hidden draw.</p>
+        <button id="reveal">Reveal preview</button>
+      </section>
+      <section id="preview-section" aria-label="Print preview">
+      <p id="preview-status" role="status">Waiting for content from chat.</p>
+      <div id="preview"></div>
+      <p id="metadata" class="muted"></p>
+      </section>
+      <section id="printer-section" aria-label="Printer">
+      <div class="row"><button id="scan">Find printer</button><button id="stop" hidden>Stop scan</button></div>
+      <label for="target">Printer</label>
+      <select id="target"><option value="">Select a discovered printer</option></select>
+      <p id="scan-status" class="muted"></p>
+      <p id="ready" role="status"></p>
+      <div class="row"><button id="print" class="primary" disabled>Print</button><button id="refresh">Refresh preview</button></div>
+      <p id="job" role="status"></p>
+      <button id="status" hidden>Check print status</button>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
