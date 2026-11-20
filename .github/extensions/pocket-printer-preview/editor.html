@@ -37,11 +37,11 @@
         <p id="render-status" role="status">Rendering example...</p>
         <div id="metadata"></div>
         <p class="hint">Estimated paper includes 80 clearance dots at nominal 203 dpi.</p>
-        <div class="paper-window" tabindex="0" role="region" aria-label="384-pixel card preview; scroll if needed">
-          <!-- Hidden until the script assigns a successfully rendered revision URL. -->
+        <div class="paper-window" id="card-preview" tabindex="0" role="region" aria-label="384-pixel card preview; scroll if needed">
+          <!-- Replaced with a source-bound image after rendering; never visible without a successful load. -->
           <img id="card" width="384" alt="Current rendered card" hidden>
         </div>
-        <p class="hint">The image above is the renderer PNG. Select a discovered printer below to prepare its exact print preview.</p>
+        <p class="hint">Select a discovered printer below to prepare the exact printable bitmap here. Print stays disabled until it loads.</p>
         <section id="printing" hidden aria-label="Explicitly approved printing">
           <h2>Print one card</h2>
           <button id="scan">Scan for printers</button>
@@ -57,11 +57,10 @@
           <div id="approval" hidden>
             <p id="helper-state"></p>
             <p id="print-binding"></p>
-            <div class="paper-window" id="print-image"></div>
-            <p class="hint">Clicking Print sends this displayed bitmap to the printer above once, using the estimated paper shown.
+            <p class="hint">Clicking Print sends the exact bitmap displayed at the top to the printer above once, using the estimated paper shown.
               In AI-client mode it starts immediately. Native mode still asks in the helper.</p>
-            <button id="confirm" disabled>Print</button>
           </div>
+          <button id="confirm" disabled>Print</button>
           <p id="job-status" role="status"></p>
           <button id="status" disabled>Check original job status</button>
           <button id="history">Find retained job</button>

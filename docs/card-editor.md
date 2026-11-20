@@ -128,7 +128,13 @@ prepared automatically after settled edits. Opening a fresh panel does not
 contact the helper.
 Use **Refresh print preview** after resolving an inspection error. Review the helper-produced bitmap,
 target, revision, original-image digest, confirmation mode and estimated paper
-length. The original renderer PNG and helper bitmap remain distinct.
+length. There is only one preview slot, above the print controls. Before
+inspection it is explicitly labeled as a draft-only renderer preview. Once
+prepared, that slot shows the exact helper-produced printable bitmap instead.
+Print remains disabled until that current image loads successfully. Draft and
+target changes invalidate the visible approval immediately; late image events
+and stale inspection responses cannot restore it. The lower controls contain
+the single Print button, not a second image or confirmation checkbox.
 The helper's controller state does not establish reachability or paper supply.
 
 After reviewing the exact bitmap, click **Print** once. That click is the

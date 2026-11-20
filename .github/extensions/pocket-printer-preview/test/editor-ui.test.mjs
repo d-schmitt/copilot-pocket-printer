@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { exampleDraft } from '../draft.mjs';
 
-async function browser(initial, request) {
+async function browser(initial, request, read = state => state) {
   const nodes = new Map(), intervals = [], cleared = [], listeners = new Map();
   const timers = new Map();
   let nextTimer = 0;
@@ -28,7 +28,8 @@ async function browser(initial, request) {
     window: { addEventListener: (name, callback) => listeners.set(name, callback) },
     fetch: async (route, options) => {
       if (request && options?.method === 'POST') state = await request(route, JSON.parse(options.body), state);
-      return { ok: true, json: async () => route === 'list_drafts' ? [] : structuredClone(state) };
+      return { ok: true, json: async () => route === 'list_drafts' ? [] :
+        structuredClone(route === 'state' ? await read(state) : state) };
     },
     structuredClone, setInterval: callback => { intervals.push(callback); return intervals.length; },
     clearInterval: id => cleared.push(id),
@@ -86,7 +87,10 @@ test('browser starts one poll on load and refreshes recovered state without open
   ui.state(state);
   await intervals[0]();
   assert.equal($('#error').hidden, true);
+  assert.equal($('#card').hidden, true, 'An unloaded image is not a current visible preview');
+  $('#card').events.get('load')();
   assert.equal($('#card').hidden, false);
+  assert.equal($('#render-status').textContent, 'Preview matches this draft', 'Opt-out panels do not suggest unavailable printer controls');
   await $('#browse').events.get('click')();
   await $('#browse').events.get('click')();
   assert.equal(intervals.length, 1, 'Browsing does not leak polling timers');
@@ -137,7 +141,9 @@ test('selecting a target and editing only prepare previews; one trusted Print cl
   await ui.tick();
   assert.equal(calls.filter(call => call.route === 'inspect_for_print').length, 1);
   assert.equal($('#confirm').disabled, true, 'Wait for exact bitmap decode');
-  $('#print-image').children[0].events.get('load')();
+  assert.equal($('#card-preview').children.length, 1);
+  assert.equal($('#card').src, 'print-preview.png?inspection=inspection-1');
+  $('#card').events.get('load')();
   assert.equal($('#confirm').disabled, false, 'No checkbox or second confirmation is required');
   await $('#confirm').events.get('click')({ isTrusted: false });
   assert.equal(calls.filter(call => call.route === 'confirm_print').length, 0);
@@ -148,7 +154,7 @@ test('selecting a target and editing only prepare previews; one trusted Print cl
   await ui.tick();
   assert.equal(calls.filter(call => call.route === 'inspect_for_print').length, 2);
   assert.equal(calls.filter(call => call.route === 'confirm_print').length, 0, 'Edits never print');
-  $('#print-image').children[0].events.get('load')();
+  $('#card').events.get('load')();
   assert.equal($('#confirm').disabled, false);
   await $('#confirm').events.get('click')({ isTrusted: true });
   await $('#confirm').events.get('click')({ isTrusted: true });
@@ -157,4 +163,158 @@ test('selecting a target and editing only prepare previews; one trusted Print cl
   assert.equal(submissions[0].input.paperApproved, true);
   assert.equal(submissions[0].input.revision, 2);
   assert.equal(submissions[0].input.inspectionId, 'inspection-2');
+});
+
+test('editor has one preview region, with a separate always-present Print control', async () => {
+  const html = await readFile(new URL('../editor.html', import.meta.url), 'utf8');
+  assert.equal((html.match(/class="paper-window"/g) ?? []).length, 1);
+  assert.equal((html.match(/<img\b/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /id="print-image"/);
+  assert.match(html, /<\/div>\s*<button id="confirm" disabled>Print<\/button>/);
+});
+
+const firstDevice = { id: '11111111-2222-4333-8444-555555555555', name: 'SYNTHETIC PRINTER', rssi: -60 };
+const secondDevice = { ...firstDevice, id: '22222222-2222-4333-8444-555555555555' };
+function readyState() {
+  return {
+    draft: exampleDraft(), revision: 1, renderedRevision: 1, saved: null,
+    image: { width: 384, height: 100, estimatedPaperMm: 22.5 }, printingAvailable: true, error: null,
+    selectedPrinter: firstDevice, discovery: { state: 'stopped', devices: [firstDevice, secondDevice] },
+    prepared: {
+      jobId: firstDevice.id, target: firstDevice.id, digest: 'original', bitmapDigest: 'bitmap',
+      revision: 1, mode: 'ai_client', inspectionId: 'inspection-1', approvalToken: 'token',
+      health: { bluetooth: 'ready', safety_blocked: false }, estimatedPaperMm: 22.5
+    }
+  };
+}
+
+test('only the current loaded top bitmap can approve printing; late image events are ignored', async () => {
+  const initial = readyState();
+  const ui = await browser(initial, async (route, input, state) => {
+    assert.equal(route, 'select_printer');
+    return { ...state, selectedPrinter: secondDevice, prepared: null };
+  });
+  const { $ } = ui;
+  const oldBitmap = $('#card');
+  oldBitmap.events.get('load')();
+  assert.equal($('#confirm').disabled, false);
+  $('#target').value = secondDevice.id;
+  const changing = $('#target').events.get('change')();
+  assert.equal(oldBitmap.hidden, true);
+  oldBitmap.events.get('load')();
+  assert.equal($('#confirm').disabled, true, 'An in-flight target change cannot restore approval');
+  await changing;
+  assert.equal($('#card').src, 'image.png?revision=1');
+  $('#card').events.get('load')();
+  assert.equal($('#confirm').disabled, true, 'Renderer-only pixels never approve printing');
+  assert.match($('#render-status').textContent, /Draft preview only/);
+  const latest = { ...initial, selectedPrinter: secondDevice,
+    prepared: { ...initial.prepared, target: secondDevice.id, inspectionId: 'inspection-2' } };
+  ui.state(latest);
+  await ui.intervals[0]();
+  const currentBitmap = $('#card');
+  assert.equal(currentBitmap.hidden, true);
+  assert.equal($('#confirm').disabled, true);
+  oldBitmap.events.get('load')();
+  assert.equal($('#confirm').disabled, true, 'Old bitmap loads cannot approve a replacement');
+  currentBitmap.events.get('load')();
+  assert.equal(currentBitmap.hidden, false);
+  assert.equal($('#confirm').disabled, false);
+  oldBitmap.events.get('error')();
+  assert.equal($('#confirm').disabled, false, 'Stale failures cannot invalidate the new image');
+  currentBitmap.events.get('error')();
+  assert.equal(currentBitmap.hidden, true);
+  assert.equal($('#confirm').disabled, true, 'Current image failure always disables Print');
+});
+
+test('edits and invalid rendering hide the exact bitmap, including late loads', async () => {
+  const initial = readyState();
+  const ui = await browser(initial, async route => {
+    assert.equal(route, 'update_draft');
+    throw new Error('Invalid draft');
+  });
+  const { $ } = ui;
+  const oldBitmap = $('#card');
+  oldBitmap.events.get('load')();
+  $('#field-title').events.get('input')();
+  oldBitmap.events.get('load')();
+  assert.equal(oldBitmap.hidden, true);
+  assert.equal($('#confirm').disabled, true);
+  await ui.tick();
+  assert.equal($('#card').hidden, true, 'Failed edits do not display the old server revision');
+  assert.equal($('#confirm').disabled, true);
+  assert.match($('#error').textContent, /Invalid draft/);
+
+  const invalid = await browser({ ...initial, renderedRevision: null, image: null });
+  assert.equal(invalid.$('#card').hidden, true);
+  assert.equal(invalid.$('#confirm').disabled, true);
+});
+
+test('an inspection completed after a settled newer edit cannot display or approve the old revision', async () => {
+  const initial = { ...readyState(), prepared: null };
+  let release;
+  const calls = [];
+  const ui = await browser(initial, async (route, input, state) => {
+    calls.push(route);
+    if (route === 'inspect_for_print') {
+      await new Promise(resolve => { release = resolve; });
+      return readyState();
+    }
+    if (route === 'update_draft') return { ...state, draft: input.draft, revision: 2, renderedRevision: 2 };
+    if (route === 'invalidate_print') return { ...state, revision: 2, renderedRevision: 2, prepared: null };
+    throw new Error(`Unexpected request: ${route}`);
+  });
+  const inspecting = ui.$('#inspect').events.get('click')();
+  await new Promise(resolve => setImmediate(resolve));
+  ui.$('#field-title').value = 'NEW SYNTHETIC REVISION';
+  ui.$('#field-title').events.get('input')();
+  await ui.tick();
+  await ui.tick();
+  release();
+  await inspecting;
+  assert.equal(ui.$('#card').src, 'image.png?revision=2');
+  ui.$('#card').events.get('load')();
+  assert.equal(ui.$('#confirm').disabled, true);
+  assert.ok(calls.includes('invalidate_print'));
+  assert.ok(!calls.includes('confirm_print'));
+});
+
+test('inspection failure preserves a draft-only preview and explicit refresh guidance after polling', async () => {
+  const initial = readyState();
+  const ui = await browser(initial, async route => {
+    assert.equal(route, 'inspect_for_print');
+    ui.state({ ...initial, prepared: null, error: { message: 'Helper unavailable' } });
+    throw new Error('Helper unavailable');
+  });
+  ui.$('#card').events.get('load')();
+  await ui.$('#inspect').events.get('click')();
+  assert.equal(ui.$('#card').src, 'image.png?revision=1');
+  ui.$('#card').events.get('load')();
+  assert.equal(ui.$('#confirm').disabled, true);
+  await ui.intervals[0]();
+  assert.match(ui.$('#print-ready').textContent, /Resolve the error, then refresh/);
+  assert.match(ui.$('#error').textContent, /Helper unavailable/);
+});
+
+test('a late poll cannot replace the preview after a newer edit has settled', async () => {
+  let release, delay = false;
+  const initial = readyState();
+  const ui = await browser(initial, async (route, input, state) => {
+    assert.equal(route, 'update_draft');
+    return { ...state, revision: 2, renderedRevision: 2, draft: input.draft, prepared: null };
+  }, async state => {
+    if (delay) { delay = false; await new Promise(resolve => { release = resolve; }); }
+    return state;
+  });
+  delay = true;
+  const polling = ui.intervals[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  ui.$('#field-title').value = 'NEW SYNTHETIC REVISION';
+  ui.$('#field-title').events.get('input')();
+  await ui.tick();
+  release();
+  await polling;
+  assert.equal(ui.$('#card').src, 'image.png?revision=2');
+  assert.equal(ui.$('#field-title').value, 'NEW SYNTHETIC REVISION');
+  assert.equal(ui.$('#confirm').disabled, true);
 });
